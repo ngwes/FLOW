@@ -1,0 +1,17 @@
+# Keep build contexts small (extended when the runtime images land in Task 21).
+.git/
+.github/
+.superpowers/
+runs/
+data/
+logs/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+.venv/

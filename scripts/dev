@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Run any command inside the FL@W dev container (no local Python needed).
+#
+#   scripts/dev pytest -m "not docker" --cov=flaw --cov-fail-under=95
+#   scripts/dev ruff check .
+#   scripts/dev mypy
+#
+# The repo is mounted at /app, so edits on the host are live inside the
+# container. The image is built on first use; the pip cache volume makes
+# rebuilds cheap.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Git Bash converts /app into C:/Program Files/Git/app; keep paths verbatim.
+export MSYS_NO_PATHCONV=1
+
+IMAGE=flaw-dev:0.1.0
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "== building $IMAGE (first run only, downloads CPU torch)" >&2
+  docker build -f docker/dev.Dockerfile -t "$IMAGE" .
+fi
+
+exec docker run --rm \
+  -v "$PWD":/app \
+  -v flaw-pip-cache:/root/.cache/pip \
+  -e PYTHONPATH=/app \
+  -w /app \
+  "$IMAGE" "$@"
