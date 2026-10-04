@@ -134,13 +134,20 @@ def test_env_override_value_is_validated(tmp_path: Path) -> None:
 
 def test_env_override_on_malformed_section_rejected(tmp_path: Path) -> None:
     text = "run: {name: r}\nmodel: {name: m}\ndata: {name: tiny}\nfederation: 3\n"
-    with pytest.raises(ConfigError, match="federation"):
+    with pytest.raises(ConfigError, match=r"FLAW_ROUNDS.*'federation' section"):
         load_config(write_cfg(tmp_path, text), env={"FLAW_ROUNDS": "5"})
 
 
 def test_missing_config_file_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="cannot read"):
         load_config(tmp_path / "does-not-exist.yaml")
+
+
+def test_non_utf8_config_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "flaw.yaml"
+    p.write_bytes(b"run: \xff\xfe\n")
+    with pytest.raises(ConfigError, match="not valid UTF-8"):
+        load_config(p)
 
 
 def test_invalid_yaml_rejected(tmp_path: Path) -> None:

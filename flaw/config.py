@@ -216,23 +216,25 @@ def _parse_number(var: str, raw: str, cast: type[int] | type[float]) -> int | fl
         raise ConfigError(f"{var}: {raw!r} is not a valid number") from exc
 
 
-def _set_section_field(data: dict[str, Any], section: str, field: str, value: object) -> None:
+def _set_section_field(
+    data: dict[str, Any], var: str, section: str, field: str, value: object
+) -> None:
     existing = data.get(section)
     if existing is None:
         data[section] = {field: value}
     elif isinstance(existing, dict):
         existing[field] = value
     else:
-        raise ConfigError(f"{section}: expected a mapping to apply the {field!r} env override")
+        raise ConfigError(f"{var} targets {field!r} but the {section!r} section is not a mapping")
 
 
 def _apply_env_overrides(data: dict[str, Any], env: Mapping[str, str]) -> None:
     for var, section, field in _STR_OVERRIDES:
         if var in env:
-            _set_section_field(data, section, field, env[var])
+            _set_section_field(data, var, section, field, env[var])
     for var, section, field, cast in _NUMERIC_OVERRIDES:
         if var in env:
-            _set_section_field(data, section, field, _parse_number(var, env[var], cast))
+            _set_section_field(data, var, section, field, _parse_number(var, env[var], cast))
 
 
 def _read_config_text(path: Path) -> str:
@@ -240,6 +242,8 @@ def _read_config_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(f"cannot read config file {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"config file {path} is not valid UTF-8: {exc}") from exc
 
 
 def _parse_config_mapping(text: str, path: Path) -> dict[str, Any]:
