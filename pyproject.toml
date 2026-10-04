@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flaw"
+version = "0.1.0"
+description = "FL@W — Federated Learning at Work: train one model across the PCs you already have"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "PyYAML>=6.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5",
+    "respx>=0.21",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "matplotlib>=3.8",
+]
+plot = ["matplotlib>=3.8"]
+
+[project.scripts]
+flaw = "flaw.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["flaw*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["docker: requires a running Docker daemon"]
+
+[tool.coverage.run]
+source = ["flaw"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+
+[tool.mypy]
+strict = true
+files = ["flaw"]
