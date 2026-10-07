@@ -35,7 +35,7 @@ def validate_blob_id(blob_id: str) -> str:
 
     Valid ids are ``r<4 digits>/global`` or ``r<4 digits>/node-<name>``.
     """
-    if not BLOB_ID_RE.match(blob_id):
+    if not BLOB_ID_RE.fullmatch(blob_id):
         raise ProtocolError(f"invalid blob id: {blob_id!r}")
     return blob_id
 

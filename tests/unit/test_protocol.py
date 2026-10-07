@@ -24,7 +24,15 @@ def test_blob_id_valid() -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    ["r1/global", "r0001/../etc", "r0001/global/", "x0001/global", "r0001/node-", "r0001/other"],
+    [
+        "r1/global",
+        "r0001/../etc",
+        "r0001/global/",
+        "x0001/global",
+        "r0001/node-",
+        "r0001/other",
+        "r0001/global\n",
+    ],
 )
 def test_blob_id_invalid(bad: str) -> None:
     with pytest.raises(ProtocolError):
