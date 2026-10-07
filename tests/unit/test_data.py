@@ -194,3 +194,19 @@ def test_load_folder_dataset_rgb(tmp_path: Path) -> None:
     x, y = ds[0]
     assert x.shape == (3, 28, 28)
     assert int(y) in {0, 1}
+
+
+# --- Item-resolution regression: nested Subsets must address the full dataset ---
+
+
+def test_prepare_node_data_items_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    base = torch.arange(256, dtype=torch.float32).reshape(256, 1, 1, 1)
+    fake = torch.utils.data.TensorDataset(base, torch.zeros(256, dtype=torch.long))
+    monkeypatch.setattr("flaw.node.data.load_dataset", lambda name, data_dir: fake)
+    config = cfg(tmp_path)
+    train, val = prepare_node_data(config, shard=0, seed=42)
+    xs_train = [float(train[i][0]) for i in range(len(train))]
+    xs_val = [float(val[i][0]) for i in range(len(val))]
+    assert len(xs_train) == 65 and len(xs_val) == 21
+    assert len(set(xs_train) | set(xs_val)) == 86  # every access resolved to a distinct shard item
+    assert not (set(xs_train) & set(xs_val))

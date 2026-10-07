@@ -196,12 +196,13 @@ def prepare_node_data(cfg: FlawConfig, shard: int, seed: int) -> tuple[Dataset[A
     )
     shard_indices = parts[shard]
     rng = numpy.random.default_rng(seed + shard)
+    # order holds POSITIONS into the shard; the nested Subsets address the full
+    # dataset through Subset(full, shard_indices), so positions are what they
+    # (and only they) accept -- full-dataset indices would be applied twice.
     order = [int(i) for i in rng.permutation(len(shard_indices))]
     val_size = int(cfg.data.val_fraction * len(shard_indices))
-    val_indices = [shard_indices[i] for i in order[:val_size]]
-    train_indices = [shard_indices[i] for i in order[val_size:]]
     shard_subset: Dataset[Any] = Subset(full, shard_indices)
-    return Subset(shard_subset, train_indices), Subset(shard_subset, val_indices)
+    return Subset(shard_subset, order[val_size:]), Subset(shard_subset, order[:val_size])
 
 
 def _labels(dataset: Dataset[Any]) -> list[int]:
