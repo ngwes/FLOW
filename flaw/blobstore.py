@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 
 from flaw.protocol import BlobRef, validate_blob_id
@@ -100,8 +101,11 @@ class BlobStore:
             if match is None or not entry.is_dir():
                 continue
             if int(match.group(1)) <= cutoff:
-                for blob_file in entry.iterdir():
-                    deleted.append(f"{entry.name}/{blob_file.stem}")
-                    blob_file.unlink()
+                for child in entry.iterdir():
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                        continue
+                    deleted.append(f"{entry.name}/{child.stem}")
+                    child.unlink()
                 entry.rmdir()
         return sorted(deleted)

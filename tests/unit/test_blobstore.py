@@ -106,3 +106,18 @@ def test_gc_skips_file_named_like_round_dir(tmp_path: Path) -> None:
     # a plain file must be skipped instead of crashing with NotADirectoryError.
     assert store.gc(current_round=5, keep_rounds=3) == []
     assert stray.read_bytes() == b"not a directory"
+
+
+def test_gc_removes_stray_subdir_inside_round_dir(tmp_path: Path) -> None:
+    store = BlobStore(tmp_path)
+    store.put("r0001/global", b"x")
+    nested = tmp_path / "r0001" / "nested"
+    nested.mkdir()
+    (nested / "junk.bin").write_bytes(b"junk")
+
+    # The sweep must not abort on the stray subdirectory, must report only the
+    # regular blob files, and must leave no r0001 directory behind.
+    deleted = store.gc(current_round=5, keep_rounds=3)
+
+    assert deleted == ["r0001/global"]
+    assert not (tmp_path / "r0001").exists()
