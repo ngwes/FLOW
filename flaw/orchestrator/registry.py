@@ -90,9 +90,11 @@ class NodeRegistry:
     def sweep(self) -> list[str]:
         """Mark timed-out records dead; return the ids newly marked dead."""
         now = self._clock()
+        # copy: /register runs on a threadpool thread and may insert while we iterate
+        snapshot = list(self._records.values())
         newly_dead = sorted(
             record.node_id
-            for record in self._records.values()
+            for record in snapshot
             if record.alive and now - record.last_seen > self.liveness_timeout_s
         )
         for node_id in newly_dead:
@@ -113,15 +115,19 @@ class NodeRegistry:
 
     def alive_nodes(self) -> list[NodeRecord]:
         """Live records sorted by node id."""
+        # copy: /register runs on a threadpool thread and may insert while we iterate
+        snapshot = list(self._records.values())
         return sorted(
-            (record for record in self._records.values() if record.alive),
+            (record for record in snapshot if record.alive),
             key=lambda record: record.node_id,
         )
 
     def dead_nodes(self) -> list[NodeRecord]:
         """Dead records sorted by node id."""
+        # copy: /register runs on a threadpool thread and may insert while we iterate
+        snapshot = list(self._records.values())
         return sorted(
-            (record for record in self._records.values() if not record.alive),
+            (record for record in snapshot if not record.alive),
             key=lambda record: record.node_id,
         )
 
@@ -143,12 +149,10 @@ class NodeRegistry:
 
     def shard_map(self) -> dict[str, int]:
         """Current node -> shard mapping, including still-pending reservations."""
-        mapping = {
-            record.node_id: record.shard
-            for record in self._records.values()
-            if record.shard is not None
-        }
-        mapping.update(self._pending_shards)
+        # copy both: /register inserts into _records and pops _pending_shards
+        records = list(self._records.values())
+        mapping = {record.node_id: record.shard for record in records if record.shard is not None}
+        mapping.update(list(self._pending_shards.items()))
         return mapping
 
     def load_shards(self, shard_map: dict[str, int]) -> None:

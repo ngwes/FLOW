@@ -1,5 +1,7 @@
 import copy
+import io
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -575,6 +577,68 @@ def test_unreadable_update_blob_rejected(tmp_path: Path) -> None:
         assert round_lines(orch)[-1]["void"] is False
 
 
+def test_torch_payload_with_string_value_does_not_kill_loop(tmp_path: Path) -> None:
+    app = make_env(tmp_path, federation={"rounds": 2, "min_participants": 1})
+    with TestClient(app) as client:
+        orch = app.state.orchestrator
+        a = FakeNode(client, orch, "a")
+        a.register()
+        a.wait_assignment(1)
+        # a decodable torch zip that is malformed *inside*: one template key maps
+        # to a string (weights_only permits str primitives), so validation raises
+        sd = a.update_sd(1, 1.0)
+        sd["fc1.weight"] = "boom"
+        buf = io.BytesIO()
+        torch.save(sd, buf)
+        up = client.post(
+            "/blob?node_id=a&round=1",
+            content=buf.getvalue(),
+            headers={"X-Flaw-Token": "secret"},
+        )
+        assert up.status_code == 200
+        assert submit_ref(a, 1, up.json()).json()["accepted"] is True
+        assert until(lambda: len(round_lines(orch)) == 1)
+        line = round_lines(orch)[0]
+        assert line["void"] is True and line["void_reason"] == "insufficient_valid_updates"
+        assert line["rejected"] == [{"node_id": "a", "reason": "unreadable"}]
+        assert orch._loop_task is not None and orch._loop_task.done() is False
+        # the loop survived: the retried round and the following one both complete
+        a.wait_assignment(1)
+        assert a.submit(1, delta=1.0, num_samples=2).json()["accepted"] is True
+        a.wait_assignment(2)
+        assert a.submit(2, delta=1.0, num_samples=2).json()["accepted"] is True
+        assert until(lambda: orch.state.status == "finished")
+
+
+def test_round_loop_survives_iteration_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    app = make_env(tmp_path, federation={"rounds": 1, "min_participants": 1})
+    with TestClient(app) as client:
+        orch = app.state.orchestrator
+        real_sweep = orch.registry.sweep
+        calls = {"n": 0}
+
+        def flaky_sweep() -> list[str]:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("sweep exploded")
+            return real_sweep()
+
+        monkeypatch.setattr(orch.registry, "sweep", flaky_sweep)
+        with caplog.at_level(logging.ERROR, logger="flaw.orchestrator"):
+            a = FakeNode(client, orch, "a")
+            a.register()
+            assert until(
+                lambda: any("round loop iteration failed" in r.getMessage() for r in caplog.records)
+            )
+            # a normal round still completes after the swallowed failure
+            a.wait_assignment(1)
+            assert a.submit(1, delta=1.0, num_samples=2).json()["accepted"] is True
+            assert until(lambda: orch.state.status == "finished")
+            assert round_lines(orch)[-1]["void"] is False
+
+
 def test_early_stop_target_reached(tmp_path: Path) -> None:
     app = make_env(
         tmp_path,
@@ -663,6 +727,38 @@ def test_recover_writes_seeded_initial_global(tmp_path: Path) -> None:
     expected = build_model(orch.cfg.model).state_dict()
     got = global_sd(orch, 1)
     assert all(torch.equal(got[k], expected[k]) for k in expected)
+
+
+def test_restarted_finished_run_reports_run_finished(tmp_path: Path) -> None:
+    app = make_env(tmp_path, federation={"rounds": 1, "min_participants": 1})
+    with TestClient(app) as client:
+        orch = app.state.orchestrator
+        a = FakeNode(client, orch, "a")
+        a.register()
+        a.wait_assignment(1)
+        assert a.submit(1, delta=1.0, num_samples=2).json()["accepted"] is True
+        assert until(lambda: orch.state.status == "finished")
+        assert until(
+            lambda: (
+                json.loads(orch.run_dir.state_path.read_text(encoding="utf-8"))["status"]
+                == "finished"
+            )
+        )
+    # restart over the same run_dir: a fresh app, fresh registry, same state.json
+    cfg = load_config(tmp_path / "flaw.yaml")
+    run_dir = RunDir(root=tmp_path / "runs", run_name=cfg.run.name)
+    restarted = create_app(cfg, run_dir, long_poll_s=0.05)
+    with TestClient(restarted) as client:
+        orch2 = restarted.state.orchestrator
+        b = FakeNode(client, orch2, "b")
+        b.register()
+        resp = b.assignment()
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["run_finished"] is True
+        assert body["reason"] == "max_rounds"
+        assert body["best_round"] == 1
+        assert orch2.state.phase == "finished"
 
 
 def test_aggregation_failure_voids_round(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

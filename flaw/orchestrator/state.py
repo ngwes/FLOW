@@ -14,11 +14,17 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
+
+# Serializes the tmp-write + replace below: the /register threadpool handler and
+# the round-loop thread both save, and both share the fixed ``state.json.tmp``
+# path, so concurrent saves could interleave and publish a torn state file.
+_SAVE_STATE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -79,11 +85,12 @@ class RunDir:
         self.blobs_dir.mkdir(parents=True, exist_ok=True)
 
     def save_state(self, state: RunState) -> None:
-        """Persist *state* to ``state.json`` atomically."""
-        payload = json.dumps(dataclasses.asdict(state), indent=2, sort_keys=True)
-        tmp = self.state_path.with_suffix(".json.tmp")
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, self.state_path)
+        """Persist *state* to ``state.json`` atomically (thread-safe)."""
+        with _SAVE_STATE_LOCK:
+            payload = json.dumps(dataclasses.asdict(state), indent=2, sort_keys=True)
+            tmp = self.state_path.with_suffix(".json.tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, self.state_path)
 
     def load_state(self) -> RunState | None:
         """Return the saved state, or ``None`` when no state file exists yet."""

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
@@ -69,6 +70,8 @@ from flaw.protocol import (
     deserialize_state_dict,
     serialize_state_dict,
 )
+
+log = logging.getLogger("flaw.orchestrator")
 
 
 def _error(status: int, reason: str) -> JSONResponse:
@@ -152,14 +155,24 @@ class Orchestrator:
 
     def recover(self) -> None:
         """Restore the round cursor from committed blobs (at-least-once rounds)."""
-        existing = self._global_rounds()
-        self.state.round = max(existing) - 1 if existing else 0
-        self.state.phase = "idle"
-        if not self.blobs.exists(global_blob_id(self.state.round + 1)):
-            torch.manual_seed(self.cfg.run.seed)  # orchestrator-level RNG: startup only
-            model = build_model(self.cfg.model)
-            sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            self.blobs.put(global_blob_id(self.state.round + 1), serialize_state_dict(sd))
+        if self.state.status == "finished":
+            # a restart of a completed run must keep answering /assignment with
+            # RunFinished instead of long-polling forever for work that never comes
+            self.state.phase = "finished"
+            self.finished = RunFinished(
+                reason=self.state.finished_reason or "finished",
+                best_round=self.state.best_round,
+                best_metric=self.state.best_metric,
+            )
+        else:
+            existing = self._global_rounds()
+            self.state.round = max(existing) - 1 if existing else 0
+            self.state.phase = "idle"
+            if not self.blobs.exists(global_blob_id(self.state.round + 1)):
+                torch.manual_seed(self.cfg.run.seed)  # orchestrator-level RNG: startup only
+                model = build_model(self.cfg.model)
+                sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                self.blobs.put(global_blob_id(self.state.round + 1), serialize_state_dict(sd))
         self.run_dir.save_state(self.state)
 
     def _ref_for(self, blob_id: str) -> BlobRef:
@@ -201,35 +214,41 @@ class Orchestrator:
 
     async def _round_loop(self) -> None:
         while True:
-            async with self.lock:
-                if self.state.status == "finished":
-                    return
-                self.registry.sweep()
-                alive = [r.node_id for r in self.registry.alive_nodes()]
-            if len(alive) < self.cfg.federation.min_participants:
-                await asyncio.sleep(0.05)
-                continue
-            round_no = self.state.round + 1
-            async with self.lock:
-                self.rounds.open(round_no, alive)
-                self.state.round = round_no
-                self.state.phase = "open"
-                self.run_dir.save_state(self.state)
-                opened_at = self.wall_clock()
-            closed: str | None = None
-            while closed is None:
-                await asyncio.sleep(0.02)
+            try:
                 async with self.lock:
+                    if self.state.status == "finished":
+                        return
                     self.registry.sweep()
-                    alive_expected = {
-                        r.node_id
-                        for r in self.registry.alive_nodes()
-                        if r.node_id in self.rounds.expected()
-                    }
-                    closed = self.rounds.close_reason(alive_expected)
-            result = self.rounds.close(closed)
-            async with self.lock:
-                self._process_round_result(result, opened_at)
+                    alive = [r.node_id for r in self.registry.alive_nodes()]
+                if len(alive) < self.cfg.federation.min_participants:
+                    await asyncio.sleep(0.05)
+                    continue
+                round_no = self.state.round + 1
+                async with self.lock:
+                    self.rounds.open(round_no, alive)
+                    self.state.round = round_no
+                    self.state.phase = "open"
+                    self.run_dir.save_state(self.state)
+                    opened_at = self.wall_clock()
+                closed: str | None = None
+                while closed is None:
+                    await asyncio.sleep(0.02)
+                    async with self.lock:
+                        self.registry.sweep()
+                        alive_expected = {
+                            r.node_id
+                            for r in self.registry.alive_nodes()
+                            if r.node_id in self.rounds.expected()
+                        }
+                        closed = self.rounds.close_reason(alive_expected)
+                result = self.rounds.close(closed)
+                async with self.lock:
+                    self._process_round_result(result, opened_at)
+            except Exception:
+                # one bad iteration must never wedge the run; CancelledError is a
+                # BaseException, so a stop() still propagates and ends the task
+                log.exception("round loop iteration failed; retrying")
+                await asyncio.sleep(0.05)
 
     def _process_round_result(self, result: RoundResult, opened_at: float) -> None:
         participants = [
@@ -277,10 +296,10 @@ class Orchestrator:
                 continue
             try:
                 sd = deserialize_state_dict(self.blobs.get(p.update_blob.blob_id))
-            except Exception:  # untrusted bytes: any decode failure rejects the update
+                reason = validate_update(sd, template)
+            except Exception:  # untrusted bytes: decode/validation crashes reject too
                 rejected.append({"node_id": p.node_id, "reason": "unreadable"})
                 continue
-            reason = validate_update(sd, template)
             if reason is not None:
                 rejected.append({"node_id": p.node_id, "reason": reason})
                 continue
