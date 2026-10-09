@@ -1,0 +1,18 @@
+# Flagship demo: real MNIST split across 2 machines. Use this same file on every PC.
+#   orchestrator PC: flaw orchestrator examples/mnist/flaw.yaml --host 0.0.0.0
+#   node PCs:        FLAW_NODE_ID=lab-1 flaw node examples/mnist/flaw.yaml --orchestrator http://ORCH_IP:8000
+run: {name: mnist-2pc, seed: 42}
+model: {name: mnist_cnn}
+data: {name: mnist, scheme: iid, num_shards: 2, val_fraction: 0.1}
+training: {local_epochs: 1, batch_size: 64, optimizer: {name: sgd, lr: 0.05, momentum: 0.9}}
+federation:
+  token: change-me-to-something-shared
+  rounds: 10
+  min_participants: 2
+  round_deadline_s: 300
+  heartbeat_s: 10
+  liveness_timeout_s: 30
+early_stopping: {metric: val_accuracy, target: 0.98, patience: 3}
+# To also score the model on a held-out folder on the orchestrator:
+#   evaluation: {central_test: {path: ./data/central, mode: "final_only"}}
+evaluation: {central_test: {mode: "off"}}

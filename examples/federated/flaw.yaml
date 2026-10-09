@@ -1,0 +1,19 @@
+# Federated (private data) mode: each node trains on ITS OWN folder; nothing is shared.
+# `path` is relative to the working directory, so run from the repo root. The value below
+# is the folder the generator writes for the first simulated node; on real machines point
+# `path` at that machine's own folder (for example ./data/local) instead. Inside it live
+# `train/<class>/*.png` and `val/<class>/*.png`.
+# Offline demo folders: python examples/federated/make_sample_data.py
+run: {name: federated-lab, seed: 42}
+model: {name: mnist_cnn}   # 1-channel model: folder images are converted to grayscale
+data:
+  path: ./examples/federated/data/node1
+training: {local_epochs: 2, batch_size: 32}
+federation:
+  token: change-me-to-something-shared
+  rounds: 10
+  min_participants: 2
+  round_deadline_s: 300
+  heartbeat_s: 10
+  liveness_timeout_s: 30
+  # node_id: lab-1            # or set FLAW_NODE_ID on each machine

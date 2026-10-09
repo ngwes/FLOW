@@ -1,0 +1,15 @@
+# Two-node demo: no GPU, no dataset download. Try it with:
+#   flaw simulate examples/tiny-sim/flaw.yaml --nodes 2
+run: {name: tiny-sim, seed: 42}
+model: {name: mnist_cnn}
+data: {name: tiny, scheme: iid, num_shards: 2, val_fraction: 0.25}
+training: {local_epochs: 2, batch_size: 32}
+federation:
+  token: change-me
+  rounds: 4
+  min_participants: 2
+  round_deadline_s: 300
+  heartbeat_s: 1
+  liveness_timeout_s: 5
+early_stopping: {metric: val_accuracy, patience: 5}
+evaluation: {central_test: {mode: "off"}}
