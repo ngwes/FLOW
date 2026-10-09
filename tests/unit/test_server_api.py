@@ -146,3 +146,17 @@ def test_blob_upload_rejections(tmp_path: Path) -> None:
         ).status_code
         == 400
     )
+
+
+def test_blob_upload_unsafe_node_id_is_400(tmp_path: Path) -> None:
+    client, orch = make_app(tmp_path)
+    # register accepts any node id string (docs the API boundary) ...
+    assert client.post("/register", json=register_body(orch, "weird/id")).status_code == 200
+    # ... but a node id that cannot form a valid blob id must 400, not 500.
+    r = client.post(
+        "/blob?node_id=weird%2Fid&round=1",
+        content=b"x",
+        headers={"X-Flaw-Token": "secret"},
+    )
+    assert r.status_code == 400
+    assert "invalid blob id" in r.json()["reason"]

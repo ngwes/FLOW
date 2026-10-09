@@ -149,7 +149,10 @@ def create_app(
             return _error(404, f"unknown node: {node_id!r}")
         if round < 1:
             return _error(400, f"round must be >= 1, got {round}")
-        ref = orch.blobs.put(node_blob_id(round, node_id), await request.body())
+        try:
+            ref = orch.blobs.put(node_blob_id(round, node_id), await request.body())
+        except ProtocolError as exc:
+            return _error(400, str(exc))
         return BlobUploadResponse(blob_id=ref.blob_id, sha256=ref.sha256, size=ref.size)
 
     @app.get("/status", response_model=StatusResponse)
