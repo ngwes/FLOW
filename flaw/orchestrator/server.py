@@ -13,21 +13,44 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager, suppress
+from typing import Any
 
+import torch
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from torch.utils.data import Dataset
 
-from flaw.blobstore import BlobNotFound, BlobStore, node_blob_id
+from flaw.blobstore import BlobNotFound, BlobStore, ChecksumMismatch, global_blob_id, node_blob_id
 from flaw.config import FlawConfig
+from flaw.config import OptimizerSpec as WireOptimizerSpec
+from flaw.models import build_model
+from flaw.orchestrator.aggregation import AggregationError, aggregate_weighted
+from flaw.orchestrator.centraleval import default_central_factory, run_central_eval
+from flaw.orchestrator.metrics import (
+    EarlyStopper,
+    MissingMetric,
+    aggregate_metrics,
+    write_metrics_line,
+)
 from flaw.orchestrator.registry import (
     NodeConflict,
     NodeRegistry,
     NoShardAvailable,
     UnknownNode,
 )
+from flaw.orchestrator.rounds import (
+    ParticipantResult,
+    RoundManager,
+    RoundPhase,
+    RoundResult,
+    SubmitOutcome,
+)
 from flaw.orchestrator.state import RunDir, RunState
 from flaw.protocol import (
+    Assignment,
+    BlobRef,
     BlobUploadResponse,
     HeartbeatRequest,
     HeartbeatResponse,
@@ -35,16 +58,39 @@ from flaw.protocol import (
     ProtocolError,
     RegisterRequest,
     RegisterResponse,
+    ResultRequest,
+    ResultResponse,
+    RunFinished,
     RunInfo,
     StatusResponse,
+    TrainSpec,
     check_protocol_version,
     compute_config_hash,
+    deserialize_state_dict,
+    serialize_state_dict,
 )
 
 
 def _error(status: int, reason: str) -> JSONResponse:
     """Build the uniform rejection body ``{"reason": reason}`` with *status*."""
     return JSONResponse(status_code=status, content={"reason": reason})
+
+
+def validate_update(
+    update: Mapping[str, torch.Tensor], template: Mapping[str, torch.Tensor]
+) -> str | None:
+    """Return a rejection reason, or None when the update matches the template exactly."""
+    for key, ref in template.items():
+        if key not in update:
+            return "missing_key"
+        value = update[key]
+        if tuple(value.shape) != tuple(ref.shape) or not torch.is_floating_point(value):
+            return "shape_mismatch"
+        if not bool(torch.isfinite(value).all()):
+            return "non_finite"
+    if set(update) - set(template):
+        return "extra_key"
+    return None
 
 
 class Orchestrator:
@@ -57,6 +103,7 @@ class Orchestrator:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         long_poll_s: float = 30.0,
+        central_dataset_factory: Callable[[], Dataset[Any]] | None = None,
     ) -> None:
         self.cfg = cfg
         self.run_dir = run_dir
@@ -69,6 +116,251 @@ class Orchestrator:
         self.state = run_dir.load_state() or RunState(run_name=cfg.run.name)
         self.expected_config_hash = compute_config_hash(cfg.canonical_hash_payload())
         self.registry.load_shards(self.state.shard_map)
+        self.rounds = RoundManager(
+            cfg.federation.min_participants, cfg.federation.round_deadline_s, clock
+        )
+        self.stopper = EarlyStopper(
+            cfg.early_stopping.metric,
+            cfg.early_stopping.target,
+            cfg.early_stopping.patience,
+            cfg.early_stopping.min_delta,
+            cfg.federation.rounds,
+        )
+        mode = cfg.evaluation.central_test.mode
+        self.every_round_eval = mode == "every_round"
+        self.final_eval = mode == "final_only"
+        self.central_factory = (
+            None if mode == "off" else (central_dataset_factory or default_central_factory(cfg))
+        )
+        self.finished: RunFinished | None = None
+        self._template: dict[str, torch.Tensor] | None = None
+        self._loop_task: asyncio.Task[None] | None = None
+
+    def model_template(self) -> dict[str, torch.Tensor]:
+        """Immutable reference state_dict used for validation and aggregation."""
+        if self._template is None:
+            model = build_model(self.cfg.model)
+            self._template = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        return self._template
+
+    def _global_rounds(self) -> list[int]:
+        out: list[int] = []
+        for d in self.run_dir.blobs_dir.glob("r????"):
+            if (d / "global.pt").exists():
+                out.append(int(d.name[1:]))
+        return sorted(out)
+
+    def recover(self) -> None:
+        """Restore the round cursor from committed blobs (at-least-once rounds)."""
+        existing = self._global_rounds()
+        self.state.round = max(existing) - 1 if existing else 0
+        self.state.phase = "idle"
+        if not self.blobs.exists(global_blob_id(self.state.round + 1)):
+            torch.manual_seed(self.cfg.run.seed)  # orchestrator-level RNG: startup only
+            model = build_model(self.cfg.model)
+            sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            self.blobs.put(global_blob_id(self.state.round + 1), serialize_state_dict(sd))
+        self.run_dir.save_state(self.state)
+
+    def _ref_for(self, blob_id: str) -> BlobRef:
+        data = self.blobs.get(blob_id)
+        return BlobRef(blob_id=blob_id, sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+
+    def try_assignment(self, node_id: str) -> Assignment | RunFinished | None:
+        """None -> the node should keep waiting; call under `self.lock`."""
+        if self.finished is not None:
+            return self.finished
+        if self.rounds.phase is not RoundPhase.OPEN:
+            return None
+        if node_id not in self.rounds.expected() or node_id in self.rounds.submitted_nodes():
+            return None
+        if not self.registry.is_alive(node_id):
+            return None
+        o = self.cfg.training.optimizer
+        round_no = self.rounds.current_round
+        return Assignment(
+            round=round_no,
+            train_spec=TrainSpec(
+                local_epochs=self.cfg.training.local_epochs,
+                batch_size=self.cfg.training.batch_size,
+                optimizer=WireOptimizerSpec(name=o.name, lr=o.lr, momentum=o.momentum),
+                seed=self.cfg.run.seed,
+            ),
+            weights=self._ref_for(global_blob_id(round_no)),
+        )
+
+    def start(self) -> None:
+        self._loop_task = asyncio.create_task(self._round_loop())
+
+    async def stop(self) -> None:
+        if self._loop_task is not None:
+            self._loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._loop_task
+            self._loop_task = None
+
+    async def _round_loop(self) -> None:
+        while True:
+            async with self.lock:
+                if self.state.status == "finished":
+                    return
+                self.registry.sweep()
+                alive = [r.node_id for r in self.registry.alive_nodes()]
+            if len(alive) < self.cfg.federation.min_participants:
+                await asyncio.sleep(0.05)
+                continue
+            round_no = self.state.round + 1
+            async with self.lock:
+                self.rounds.open(round_no, alive)
+                self.state.round = round_no
+                self.state.phase = "open"
+                self.run_dir.save_state(self.state)
+                opened_at = self.wall_clock()
+            closed: str | None = None
+            while closed is None:
+                await asyncio.sleep(0.02)
+                async with self.lock:
+                    self.registry.sweep()
+                    alive_expected = {
+                        r.node_id
+                        for r in self.registry.alive_nodes()
+                        if r.node_id in self.rounds.expected()
+                    }
+                    closed = self.rounds.close_reason(alive_expected)
+            result = self.rounds.close(closed)
+            async with self.lock:
+                self._process_round_result(result, opened_at)
+
+    def _process_round_result(self, result: RoundResult, opened_at: float) -> None:
+        participants = [
+            {
+                "node_id": p.node_id,
+                "num_samples": p.num_samples,
+                "metrics": dict(p.metrics),
+                "duration_s": p.duration_s,
+                "device": p.device,
+                "update_blob_id": p.update_blob.blob_id,
+            }
+            for p in result.participants
+        ]
+        line: dict[str, object] = {
+            "type": "round",
+            "round": result.round,
+            "void": result.void,
+            "void_reason": result.void_reason,
+            "closed_reason": result.closed_reason,
+            "participants": participants,
+            "rejected": [],
+            "duration_s": self.wall_clock() - opened_at,
+        }
+
+        def void(reason_value: str) -> None:
+            line.update(void=True, void_reason=reason_value, closed_reason=None)
+            write_metrics_line(self.run_dir.metrics_path, line)
+            self.state.round = result.round - 1  # the same round number opens again
+            self.state.phase = "idle"
+            self.run_dir.save_state(self.state)
+
+        if result.void:
+            void(result.void_reason or "insufficient_participants")
+            return
+
+        template = self.model_template()
+        updates: list[tuple[Mapping[str, torch.Tensor], int]] = []
+        accepted: list[ParticipantResult] = []
+        rejected: list[dict[str, str]] = []
+        for p in result.participants:
+            if p.num_samples <= 0:
+                # zero/negative sample weights would divide by zero in
+                # aggregate_metrics or skew the mean; never aggregate them.
+                rejected.append({"node_id": p.node_id, "reason": "invalid_samples"})
+                continue
+            try:
+                sd = deserialize_state_dict(self.blobs.get(p.update_blob.blob_id))
+            except Exception:  # untrusted bytes: any decode failure rejects the update
+                rejected.append({"node_id": p.node_id, "reason": "unreadable"})
+                continue
+            reason = validate_update(sd, template)
+            if reason is not None:
+                rejected.append({"node_id": p.node_id, "reason": reason})
+                continue
+            updates.append((sd, p.num_samples))
+            accepted.append(p)
+        line["rejected"] = rejected
+
+        if len(updates) < self.cfg.federation.min_participants:
+            void("insufficient_valid_updates")
+            return
+        try:
+            aggregated = aggregate_weighted(updates, template)
+        except AggregationError:
+            void("aggregation_failed")
+            return
+
+        ref = self.blobs.put(global_blob_id(result.round + 1), serialize_state_dict(aggregated))
+        line["global_blob_id"] = ref.blob_id
+        line["aggregated"] = aggregate_metrics([(p.metrics, p.num_samples) for p in accepted])
+
+        if self.every_round_eval and self.central_factory is not None:
+            try:
+                line["central"] = run_central_eval(self.cfg, aggregated, self.central_factory)
+            except Exception as exc:  # a broken central set must not kill the run
+                line["central_error"] = str(exc)
+
+        decision = None
+        try:
+            decision = self.stopper.update(result.round, line["aggregated"])  # type: ignore[arg-type]
+        except MissingMetric:
+            line["early_stop_metric_missing"] = True
+        if self.stopper.best_round == result.round:
+            self.run_dir.save_best(aggregated)
+
+        self.state.round = result.round
+        self.state.phase = "idle"
+        self.state.best_metric = self.stopper.best_metric
+        self.state.best_round = self.stopper.best_round
+        write_metrics_line(self.run_dir.metrics_path, line)
+        self.blobs.gc(
+            current_round=result.round, keep_rounds=self.cfg.storage.retention.keep_rounds
+        )
+
+        stop_reason = decision.reason if (decision is not None and decision.stop) else None
+        if stop_reason is None and result.round >= self.cfg.federation.rounds:
+            stop_reason = "max_rounds"
+        if stop_reason is not None:
+            self._finish(stop_reason, aggregated)
+        else:
+            self.run_dir.save_state(self.state)
+
+    def _finish(self, reason: str, final_sd: Mapping[str, torch.Tensor]) -> None:
+        self.state.status = "finished"
+        self.state.finished_reason = reason
+        self.state.phase = "finished"
+        self.run_dir.save_final(final_sd)
+        summary: dict[str, object] = {
+            "type": "summary",
+            "reason": reason,
+            "best_round": self.stopper.best_round,
+            "best_metric": self.stopper.best_metric,
+        }
+        if self.final_eval and self.central_factory is not None:
+            try:
+                if self.run_dir.best_path.exists():
+                    best_sd = torch.load(self.run_dir.best_path, weights_only=True)
+                    summary["central_best"] = run_central_eval(
+                        self.cfg, best_sd, self.central_factory
+                    )
+                summary["central_final"] = run_central_eval(
+                    self.cfg, final_sd, self.central_factory
+                )
+            except Exception as exc:  # never let evaluation kill a finished run
+                summary["central_error"] = str(exc)
+        write_metrics_line(self.run_dir.metrics_path, summary)
+        self.run_dir.save_state(self.state)
+        self.finished = RunFinished(
+            reason=reason, best_round=self.stopper.best_round, best_metric=self.stopper.best_metric
+        )
+        self.rounds.finish()
 
 
 def create_app(
@@ -78,10 +370,31 @@ def create_app(
     clock: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], float] = time.time,
     long_poll_s: float = 30.0,
+    start_loop: bool = True,
+    central_dataset_factory: Callable[[], Dataset[Any]] | None = None,
 ) -> FastAPI:
     """Build the orchestrator app; its :class:`Orchestrator` is at ``app.state``."""
-    orch = Orchestrator(cfg, run_dir, clock=clock, wall_clock=wall_clock, long_poll_s=long_poll_s)
-    app = FastAPI()
+    orch = Orchestrator(
+        cfg,
+        run_dir,
+        clock=clock,
+        wall_clock=wall_clock,
+        long_poll_s=long_poll_s,
+        central_dataset_factory=central_dataset_factory,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if start_loop:
+            orch.recover()
+            orch.start()
+        try:
+            yield
+        finally:
+            if start_loop:
+                await orch.stop()
+
+    app = FastAPI(title=f"FL@W orchestrator — {cfg.run.name}", lifespan=lifespan)
     app.state.orchestrator = orch
 
     @app.post("/register", response_model=RegisterResponse)
@@ -175,5 +488,59 @@ def create_app(
             best_metric=orch.state.best_metric,
             best_round=orch.state.best_round,
         )
+
+    @app.get("/assignment")
+    async def assignment(node_id: str) -> Response:
+        try:
+            orch.registry.get(node_id)
+        except UnknownNode:
+            return _error(404, "unknown node")
+        deadline = orch.clock() + orch.long_poll_s
+        while True:
+            async with orch.lock:
+                resp = orch.try_assignment(node_id)
+            if resp is not None:
+                return JSONResponse(content=resp.model_dump(mode="json"))
+            if orch.clock() >= deadline:
+                return Response(status_code=204)
+            await asyncio.sleep(0.05)
+
+    @app.post("/result")
+    async def result(body: ResultRequest) -> Response:
+        try:
+            orch.registry.get(body.node_id)
+        except UnknownNode:
+            return _error(404, "unknown node")
+
+        def rejected(reason: str) -> JSONResponse:
+            return JSONResponse(content=ResultResponse(accepted=False, reason=reason).model_dump())
+
+        expected_id = node_blob_id(body.round, body.node_id)
+        if body.update.blob_id != expected_id:
+            return rejected("invalid")
+        try:
+            data = orch.blobs.get(expected_id)
+            orch.blobs.verify(body.update, data)
+        except (BlobNotFound, ChecksumMismatch):
+            return rejected("invalid")
+
+        participant = ParticipantResult(
+            node_id=body.node_id,
+            num_samples=body.num_samples,
+            metrics=dict(body.metrics),
+            duration_s=body.duration_s,
+            device=body.device,
+            update_blob=body.update,
+        )
+        async with orch.lock:
+            outcome = orch.rounds.submit(body.node_id, body.round, participant)
+        if outcome is SubmitOutcome.ACCEPTED:
+            return JSONResponse(content=ResultResponse(accepted=True).model_dump())
+        reasons = {
+            SubmitOutcome.DUPLICATE: "duplicate",
+            SubmitOutcome.STALE: "stale",
+            SubmitOutcome.UNKNOWN_ROUND: "unknown_round",
+        }
+        return rejected(reasons[outcome])
 
     return app
