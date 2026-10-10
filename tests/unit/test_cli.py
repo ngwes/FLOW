@@ -151,3 +151,80 @@ def test_status_command_unreachable_exits_1() -> None:
     respx.get("http://down.test/status").mock(side_effect=httpx.ConnectError("refused"))
     result = runner.invoke(cli.app, ["status", "--orchestrator", "http://down.test"])
     assert result.exit_code == 1 and "Cannot reach" in result.output
+
+
+def test_plot_command_passes_runs_labels_and_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict = {}
+
+    def fake_plot_runs(runs, out_path, **kw):  # type: ignore[no-untyped-def]
+        calls.update(runs=runs, out_path=out_path, **kw)
+        return Path(out_path)
+
+    monkeypatch.setattr(cli, "plot_runs", fake_plot_runs)
+    result = runner.invoke(
+        cli.app,
+        [
+            "plot",
+            str(tmp_path / "runA"),
+            str(tmp_path / "runB"),
+            "--labels",
+            "iid, non-iid",
+            "--metric",
+            "val_loss",
+            "--out",
+            str(tmp_path / "plot.png"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert calls["runs"] == {"iid": tmp_path / "runA", "non-iid": tmp_path / "runB"}
+    assert calls["metric"] == "val_loss"
+    assert calls["out_path"] == tmp_path / "plot.png"
+    assert "plot.png" in result.output
+
+
+def test_plot_command_default_labels_are_directory_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+
+    def fake_plot_runs(runs, out_path, **kw):  # type: ignore[no-untyped-def]
+        captured.update(runs=runs)
+        return Path(out_path)
+
+    monkeypatch.setattr(cli, "plot_runs", fake_plot_runs)
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "tiny-sim")])
+    assert result.exit_code == 0
+    assert captured["runs"] == {"tiny-sim": tmp_path / "tiny-sim"}
+
+
+def test_plot_command_label_count_mismatch_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "plot_runs", lambda *a, **kw: pytest.fail("must not be called"))
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "a"), "--labels", "x,y"])
+    assert result.exit_code == 2
+    assert "--labels" in result.output
+
+
+def test_plot_command_missing_matplotlib_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: object, **kw: object) -> None:
+        raise RuntimeError("plotting needs matplotlib - install it with: pip install 'flaw[plot]'")
+
+    monkeypatch.setattr(cli, "plot_runs", boom)
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "a")])
+    assert result.exit_code == 1
+    assert "flaw[plot]" in result.output
+
+
+def test_plot_command_bad_metric_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*args: object, **kw: object) -> None:
+        raise ValueError("no plottable data for metric 'nope'")
+
+    monkeypatch.setattr(cli, "plot_runs", boom)
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "a"), "--metric", "nope"])
+    assert result.exit_code == 1
+    assert "no plottable data" in result.output

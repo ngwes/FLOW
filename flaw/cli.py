@@ -9,12 +9,14 @@ import httpx
 import typer
 import uvicorn
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from flaw import __version__
 from flaw.config import ConfigError, FlawConfig, config_source_text, load_config
 from flaw.node.runner import resolve_node_id, run_node
 from flaw.orchestrator.server import create_app
+from flaw.plot import plot_runs
 from flaw.simulate import SimulationResult, prepare_run_dir, run_simulation
 
 app = typer.Typer(help="FL@W - Federated Learning at Work", no_args_is_help=True)
@@ -151,6 +153,32 @@ def status(
             f"{node_row['last_heartbeat_age_s']:.1f}",
         )
     console.print(table)
+
+
+@app.command()
+def plot(
+    run_dirs: list[Path] = typer.Argument(..., help="Run directories, e.g. runs/tiny-sim"),
+    labels: str | None = typer.Option(
+        None, "--labels", help="Comma-separated labels, one per run (default: directory names)"
+    ),
+    metric: str = typer.Option("val_accuracy", "--metric", help="Metric key to plot"),
+    out: Path = typer.Option(Path("runs/plot.png"), "--out", help="Output PNG path"),
+) -> None:
+    """Plot a metric across rounds for one or more finished runs."""
+    run_labels = (
+        [part.strip() for part in labels.split(",")]
+        if labels is not None
+        else [run_dir.name for run_dir in run_dirs]
+    )
+    if len(run_labels) != len(run_dirs):
+        console.print("[red]--labels needs one label per run directory[/red]")
+        raise typer.Exit(EXIT_BAD_CONFIG)
+    try:
+        out_path = plot_runs(dict(zip(run_labels, run_dirs, strict=True)), out, metric=metric)
+    except (OSError, RuntimeError, ValueError) as exc:
+        console.print(f"[red]Plotting failed:[/red] {escape(str(exc))}")
+        raise typer.Exit(EXIT_FAILED) from exc
+    console.print(f"Plot written to [bold]{out_path}[/bold]")
 
 
 def main() -> None:
