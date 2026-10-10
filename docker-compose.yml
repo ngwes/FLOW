@@ -1,0 +1,67 @@
+# One orchestrator + two GPU nodes on a single machine.
+#   CPU-only machines / CI:  docker compose up --build -d
+#   GPU machines:            docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+# Point the /etc/flaw/flaw.yaml mounts at your own training description to change the run.
+name: flaw
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    image: flaw-orchestrator:0.1.0
+    command: ["orchestrator", "/etc/flaw/flaw.yaml", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./examples/tiny-sim/flaw.yaml:/etc/flaw/flaw.yaml:ro
+      - ${FLAW_RUNS_DIR:-./runs}:/app/runs
+    restart: unless-stopped
+
+  node1:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+      args:
+        FLAW_BASE: ${FLAW_NODE_BASE:-pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime}
+        FLAW_TORCH_INDEX_URL: ${FLAW_NODE_TORCH_INDEX:-}
+    image: flaw-node:0.1.0
+    command: ["node", "/etc/flaw/flaw.yaml", "--orchestrator", "http://orchestrator:8000"]
+    environment:
+      FLAW_NODE_ID: node1
+      FLAW_DATA_DIR: /data
+    volumes:
+      - ./examples/tiny-sim/flaw.yaml:/etc/flaw/flaw.yaml:ro
+      - ${FLAW_DATA_DIR:-./data}/node1:/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8g
+
+  node2:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+      args:
+        FLAW_BASE: ${FLAW_NODE_BASE:-pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime}
+        FLAW_TORCH_INDEX_URL: ${FLAW_NODE_TORCH_INDEX:-}
+    image: flaw-node:0.1.0
+    command: ["node", "/etc/flaw/flaw.yaml", "--orchestrator", "http://orchestrator:8000"]
+    environment:
+      FLAW_NODE_ID: node2
+      FLAW_DATA_DIR: /data
+    volumes:
+      - ./examples/tiny-sim/flaw.yaml:/etc/flaw/flaw.yaml:ro
+      - ${FLAW_DATA_DIR:-./data}/node2:/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8g

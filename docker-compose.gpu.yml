@@ -1,0 +1,20 @@
+# Override: give each node one GPU (edit device_ids for your machines).
+# Soft VRAM split per node: docker compose -f ... -f docker-compose.gpu.yml run -e FLAW_VRAM_FRACTION=0.45 node1 ...
+services:
+  node1:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  node2:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
