@@ -1,17 +1,19 @@
-# Keep build contexts small (extended when the runtime images land in Task 21).
-.git/
-.github/
-.superpowers/
+# Runtime artifacts and dev-only files — keep the build context small
 runs/
 data/
-logs/
-*.log
+.git/
+.github/
+tests/
+docs/
+examples/
+htmlcov/
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
-htmlcov/
-coverage.xml
-.venv/
+.idea/
+.vscode/
