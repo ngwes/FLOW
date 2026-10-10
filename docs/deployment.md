@@ -19,8 +19,10 @@ FLAW_NODE_ID=lab-1 flaw node examples/mnist/flaw.yaml --orchestrator http://ORCH
 
 Checklist:
 
-- All machines run the *same* `flaw.yaml`; environment overrides (`FLAW_ROUNDS`, ...)
-  must match too, because the config hash is checked at registration.
+- All machines run the *same* `flaw.yaml` — the orchestrator checks a hash of the
+  training-relevant config (model, training, data name/scheme) at registration
+  (`config mismatch: node config hash does not match the run`). `FLAW_TOKEN` must
+  match everywhere; `FLAW_NODE_ID` must be unique per machine.
 - Each node needs a unique `FLAW_NODE_ID` (or `federation.node_id`).
 - The orchestrator port (default 8000) must be reachable from every node — allow it
   through the OS firewall (on Windows, "Windows Defender Firewall → Advanced →
@@ -86,6 +88,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 | path | created by | content |
 |---|---|---|
 | `runs/<name>/` | orchestrator | `metrics.jsonl`, `best.pt`, `final.pt`, `state.json`, `blobs/`, `config.yaml` |
+| `runs/<name>/orchestrator.log` | orchestrator | the orchestrator's log for that run |
 | `data/` (default) | nodes | downloaded datasets (`mnist`, `cifar10`) |
 | `./data/nodeN/` (compose) | nodes | per-container dataset cache |
 
@@ -93,10 +96,17 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 
 | symptom | likely cause | fix |
 |---|---|---|
-| node exits `fatal_error` at startup | token or config mismatch, or the orchestrator is unreachable | same YAML (and env) everywhere; check the URL and firewall |
-| "config hash mismatch" at registration | the YAML files differ between machines | re-copy the file; remember env overrides change the hash |
+| node exits `fatal_error` at startup | token or config mismatch — HTTP 403/409 rejections are fatal | same YAML and token everywhere; the node log shows the exact rejection |
+| node keeps retrying instead of registering | the orchestrator is unreachable (transport errors are retried with backoff, not fatal) | check the URL and the firewall between the machines |
+| `config mismatch: node config hash does not match the run` at registration | the training-relevant config differs between machines | re-copy the file; the hash covers model, training, and data name/scheme (env overrides like `FLAW_ROUNDS` do not change it) |
 | rounds keep voiding | `min_participants` higher than the number of live nodes | lower it or add nodes |
-| "no shard available" | `num_shards` < number of nodes | raise `num_shards` |
+| "no shards available: all N shards are taken" | `num_shards` < number of nodes | raise `num_shards` |
 | CUDA OOM on a node | model/batch too big, or two nodes share one GPU | lower `training.batch_size`, set `resources.vram_fraction` |
 | run stalls near the deadline each round | one node is much slower | raise `federation.round_deadline_s` |
 | `nvidia-smi` works on the host but not in a container | toolkit/desktop GPU support missing | redo the passthrough section above |
+
+## See also
+
+- `docs/protocol.md` — the wire protocol, blob conventions, and round-loop semantics.
+- `README.md` — the 60-second demo and the two data modes.
+- `examples/compare_iid_non_iid/` — why sharding affects training quality.

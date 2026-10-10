@@ -1,4 +1,4 @@
-# Half of the IID-vs-non-IID comparison. Identical to the Dirichlet config except `scheme`.
+# Half of the IID-vs-non-IID comparison. Trains identically to the Dirichlet config apart from `run.name` and the `data` line.
 #   python examples/compare_iid_non_iid/compare.py
 run: {name: cmp-iid, seed: 42}
 model: {name: mnist_cnn}

@@ -15,7 +15,7 @@ pip install -e ".[plot]"
 python examples/compare_iid_non_iid/compare.py --rounds 10 --nodes 4
 ```
 
-The two configs are identical except for the `data.scheme` line:
+The two configs train identically except for the `data` line (plus the per-run `run.name`):
 
 | config | `data.scheme` | what each node trains on |
 |---|---|---|

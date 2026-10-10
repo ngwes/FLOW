@@ -45,6 +45,16 @@ flaw status --orchestrator http://ORCHESTRATOR_IP:8000
 | `blobs/rNNNN/` | the weight blobs actually moved between machines, addressed by id |
 | `config.yaml` | snapshot of the training description that produced the run |
 
+## Watch the curves
+
+```bash
+pip install -e ".[plot]"
+flaw plot runs/tiny-sim --out tiny-sim.png
+```
+
+One line per run (dashed lines appear when the central test set is enabled). Compare
+runs side by side: `flaw plot runs/a runs/b --labels iid,non-iid`.
+
 ## Two ways to have data
 
 - **Shared** — one dataset, split deterministically across nodes:
@@ -55,6 +65,9 @@ flaw status --orchestrator http://ORCHESTRATOR_IP:8000
   from the repo root), so every machine runs the same YAML with a `path` pointing
   at its own folder. `python examples/federated/make_sample_data.py` builds toy
   folders so you can try it offline.
+
+Curious how sharding affects training? `python examples/compare_iid_non_iid/compare.py`
+trains the same model on IID vs skewed shards and plots both curves.
 
 ## Rules of the road
 
@@ -73,7 +86,9 @@ pip install -e ".[dev]"
 pytest -m "not docker" --cov=flaw --cov-fail-under=95
 ```
 
-Roadmap: **Phase 1 (this)** core + CLI · **Phase 2** Docker images, per-node resource
-quotas, compose · **Phase 3** docs, plotting, IID vs non-IID comparison · **Phase 4
-(later, not built)** secure aggregation, TLS, multi-model support. Details in
-`docs/superpowers/specs/2026-10-04-flaw-design.md`.
+Built so far: **Phase 1** core + CLI · **Phase 2** Docker images, per-node resource
+quotas, compose · **Phase 3** docs, plotting, IID vs non-IID comparison. **Phase 4
+(later, not built):** secure aggregation, TLS, multi-model support. Further reading:
+`docs/protocol.md` (wire protocol), `docs/deployment.md` (bare processes and
+Docker, GPU passthrough), `docs/superpowers/specs/2026-10-04-flaw-design.md`
+(the design).
