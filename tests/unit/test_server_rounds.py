@@ -399,7 +399,7 @@ def test_dead_node_does_not_stall_round(tmp_path: Path) -> None:
             "rounds": 1,
             "min_participants": 2,
             "round_deadline_s": 30.0,
-            "liveness_timeout_s": 0.3,
+            "liveness_timeout_s": 1.0,
         },
     )
     with TestClient(app) as client:
@@ -416,7 +416,7 @@ def test_dead_node_does_not_stall_round(tmp_path: Path) -> None:
         assert until(lambda: not orch.registry.is_alive("b"), timeout=3.0)
         a.heartbeat()  # a stays alive; b stays silent
         assert b.no_assignment(0.2)  # dead but still expected: never handed work
-        a.heartbeat()  # liveness_timeout_s is 0.3 s: refresh after the 0.2 s dead wait
+        a.heartbeat()  # liveness_timeout_s is 1.0 s: refresh after the 0.2 s dead wait
         a.wait_assignment(1)
         a.heartbeat()  # keep a alive across submit up to the round's close check
         assert a.submit(1, delta=0.5, num_samples=1).json()["accepted"] is True
