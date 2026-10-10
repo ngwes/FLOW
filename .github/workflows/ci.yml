@@ -14,3 +14,17 @@ jobs:
       - run: ruff check .
       - run: mypy
       - run: pytest -m "not docker" --cov=flaw --cov-fail-under=95
+  docker-smoke:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    env:
+      FLAW_NODE_BASE: python:3.11-slim
+      FLAW_NODE_TORCH_INDEX: https://download.pytorch.org/whl/cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -m docker tests/integration/test_docker_smoke.py -v
