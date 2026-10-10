@@ -1,0 +1,15 @@
+# Half of the IID-vs-non-IID comparison. Identical to the Dirichlet config except `scheme`.
+#   python examples/compare_iid_non_iid/compare.py
+run: {name: cmp-iid, seed: 42}
+model: {name: mnist_cnn}
+data: {name: tiny, scheme: iid, num_shards: 4, val_fraction: 0.25}
+training: {local_epochs: 2, batch_size: 32}
+federation:
+  token: compare-demo
+  rounds: 10
+  min_participants: 2
+  round_deadline_s: 120
+  heartbeat_s: 0.5
+  liveness_timeout_s: 10
+early_stopping: {metric: val_accuracy, patience: 4}
+evaluation: {central_test: {mode: "off"}}
