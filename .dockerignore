@@ -3,6 +3,9 @@ runs/
 data/
 .git/
 .github/
+.superpowers/
+logs/
+*.log
 tests/
 docs/
 examples/
@@ -15,5 +18,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 .idea/
 .vscode/
