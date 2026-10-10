@@ -82,7 +82,7 @@ FL@W's own error bodies are always `{"reason": "<text>"}`.
 ```
 
 - `config_hash` proves every machine trains the same recipe; a mismatch → **409**
-  `config mismatch` with no partial acceptance.
+  `config mismatch: node config hash does not match the run` with no partial acceptance.
 - `shard` (shared-data mode only) is the data slice this node must train on; it is
   assigned once, persisted in `state.json`, and returned again on re-registration.
   In federated mode it is `null`.
@@ -146,7 +146,8 @@ Response: `{"accepted": true, "reason": null}` — or `accepted: false` with one
 | `unknown_round` | the round number is from the future |
 | `invalid` | the blob didn't pass the checks below |
 
-Checks run in this order: unknown node → **404**; submitted `update.blob_id` is not
+Checks run in this order: a malformed `update` ref (bad `blob_id` or bad `sha256`
+length) → **400**; unknown node → **404**; submitted `update.blob_id` is not
 this node's update id for this round → `invalid`; blob missing on the orchestrator
 or sha256 mismatch → `invalid` (untrusted bytes are never deserialized); then
 `duplicate` / `stale` / `unknown_round`.
@@ -229,7 +230,7 @@ training description; `blobs/` — every weight file that moved, exactly as it m
 |---|---|
 | node crashes mid-round | swept after `liveness_timeout_s`; round closes with or without it |
 | node returns late | `stale`; its blob is ignored but retained until GC |
-| node starts duplicated (same id) | second registration → 409 `node id already in use` |
+| node starts duplicated (same id) | second registration → 409 `node id '<id>' is in use` |
 | orchestrator crashes mid-round | restart recomputes the round from blobs; round N re-runs |
 | blob corrupted in transit | sha256 mismatch → rejected before deserialization |
 | few nodes left | open gate + `min_participants` voids keep rounds honest |

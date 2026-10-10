@@ -98,6 +98,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 |---|---|---|
 | node exits `fatal_error` at startup | token or config mismatch — HTTP 403/409 rejections are fatal | same YAML and token everywhere; the node log shows the exact rejection |
 | node keeps retrying instead of registering | the orchestrator is unreachable (transport errors are retried with backoff, not fatal) | check the URL and the firewall between the machines |
+| orchestrator restarts mid-run | nodes lose their registration but keep retrying | nothing — nodes re-register automatically (with backoff) and keep their shard from `state.json` |
 | `config mismatch: node config hash does not match the run` at registration | the training-relevant config differs between machines | re-copy the file; the hash covers model, training, and data name/scheme (env overrides like `FLAW_ROUNDS` do not change it) |
 | rounds keep voiding | `min_participants` higher than the number of live nodes | lower it or add nodes |
 | "no shards available: all N shards are taken" | `num_shards` < number of nodes | raise `num_shards` |

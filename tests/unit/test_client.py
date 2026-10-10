@@ -202,3 +202,10 @@ def test_transport_error_is_not_fatal(client) -> None:
     message = str(excinfo.value)
     assert message.startswith("transport error:")
     assert "HTTP 0" not in message
+
+
+def test_client_error_unknown_node_property() -> None:
+    assert ClientError(404, "unknown node", fatal=True).unknown_node is True
+    assert ClientError(404, "unknown node: 'lab-9'", fatal=True).unknown_node is True
+    assert ClientError(404, "blob not found: 'r0001/global'", fatal=True).unknown_node is False
+    assert ClientError(403, "invalid token", fatal=True).unknown_node is False

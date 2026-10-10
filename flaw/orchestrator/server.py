@@ -416,6 +416,11 @@ def create_app(
     app = FastAPI(title=f"FL@W orchestrator — {cfg.run.name}", lifespan=lifespan)
     app.state.orchestrator = orch
 
+    @app.exception_handler(ProtocolError)
+    async def _protocol_error(request: Request, exc: ProtocolError) -> JSONResponse:
+        """Malformed protocol identifiers in a body (e.g. a bad blob_ref) -> 400."""
+        return _error(400, str(exc))
+
     @app.post("/register", response_model=RegisterResponse)
     def register(body: RegisterRequest) -> RegisterResponse | JSONResponse:
         if body.token != orch.cfg.federation.token:

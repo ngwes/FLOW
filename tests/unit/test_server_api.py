@@ -160,3 +160,31 @@ def test_blob_upload_unsafe_node_id_is_400(tmp_path: Path) -> None:
     )
     assert r.status_code == 400
     assert "invalid blob id" in r.json()["reason"]
+
+
+def test_assignment_unknown_node_is_404_with_reason(tmp_path: Path) -> None:
+    client, _ = make_app(tmp_path)
+    response = client.get("/assignment", params={"node_id": "ghost"})
+    assert response.status_code == 404
+    assert response.json() == {"reason": "unknown node"}
+
+
+def test_result_malformed_blob_ref_is_400(tmp_path: Path) -> None:
+    client, orch = make_app(tmp_path)
+    client.post("/register", json=register_body(orch, "lab-1"))
+    body: dict = {
+        "node_id": "lab-1",
+        "round": 1,
+        "update": {"blob_id": "not-a-blob", "sha256": "0" * 64, "size": 1},
+        "num_samples": 8,
+        "metrics": {"loss": 0.5},
+        "duration_s": 0.1,
+        "device": "cpu",
+    }
+    r = client.post("/result", json=body)
+    assert r.status_code == 400
+    assert r.json()["reason"].startswith("invalid blob id")
+    body["update"] = {"blob_id": "r0001/node-lab-1", "sha256": "abc", "size": 1}
+    r = client.post("/result", json=body)
+    assert r.status_code == 400
+    assert "sha256" in r.json()["reason"]

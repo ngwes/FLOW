@@ -83,18 +83,24 @@ class NodeHandle:
 class LiveOrchestrator:
     """A real uvicorn orchestrator in a thread, for end-to-end scenario tests."""
 
-    def __init__(self, cfg: FlawConfig, run_dir: RunDir, long_poll_s: float = 0.5) -> None:
+    def __init__(
+        self,
+        cfg: FlawConfig,
+        run_dir: RunDir,
+        long_poll_s: float = 0.5,
+        port: int | None = None,
+    ) -> None:
         self.cfg = cfg
         self.run_dir = run_dir
         app = create_app(cfg, run_dir, long_poll_s=long_poll_s)
-        port = free_port()
+        self.port = free_port() if port is None else port
         self._server = uvicorn.Server(
-            uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+            uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning")
         )
         self._thread = threading.Thread(
             target=self._server.run, daemon=True, name="scenario-orchestrator"
         )
-        self.url = f"http://127.0.0.1:{port}"
+        self.url = f"http://127.0.0.1:{self.port}"
         self._nodes: list[NodeHandle] = []
 
     def start(self) -> LiveOrchestrator:
@@ -106,9 +112,10 @@ class LiveOrchestrator:
             time.sleep(0.01)
         return self
 
-    def stop(self) -> None:
-        for node in self._nodes:
-            node.stop_node()
+    def stop(self, *, nodes: bool = True) -> None:
+        if nodes:
+            for node in self._nodes:
+                node.stop_node()
         self._server.should_exit = True
         self._thread.join(timeout=15.0)
 
@@ -210,19 +217,29 @@ def test_orchestrator_restart_resumes_run(tmp_path: Path) -> None:
     run_dir = RunDir(root=tmp_path / "runs", run_name="restart")
 
     first = LiveOrchestrator(cfg, run_dir).start()
-    first.start_node("a")
+    handle = first.start_node("a")
     until(lambda: len(first.rounds()) >= 1, what="round 1 line before restart")
-    first.stop()  # kills the server and its node mid-run
+    first.stop(nodes=False)  # the server dies; the node keeps running
 
-    second = LiveOrchestrator(cfg, run_dir).start()  # new port, same run dir
+    second = LiveOrchestrator(cfg, run_dir, port=first.port).start()  # same URL, same run dir
     try:
-        second.start_node("a")
+        until(
+            lambda: handle.results.get("a") == "finished",
+            timeout=120.0,
+            what="node survived the restart and finished",
+        )
         until(second.finished, timeout=120.0, what="run finished after restart")
     finally:
         second.stop()
+        handle.stop_node()
 
     completed = [line for line in second.rounds() if not line["void"]]
     assert [line["round"] for line in completed] == [1, 2, 3]  # recovery, not a fresh run
+    assert [[p["node_id"] for p in line["participants"]] for line in completed] == [
+        ["a"],
+        ["a"],
+        ["a"],
+    ]  # the same node re-registered after the restart
     state = second.state()
     assert state.finished_reason == "max_rounds" and state.round == 3
 

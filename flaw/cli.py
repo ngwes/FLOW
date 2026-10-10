@@ -44,7 +44,7 @@ def _load_or_exit(path: Path) -> FlawConfig:
     try:
         return load_config(path)
     except ConfigError as exc:
-        console.print(f"[red]Invalid config:[/red] {exc}")
+        console.print(f"[red]Invalid config:[/red] {escape(str(exc))}")
         raise typer.Exit(EXIT_BAD_CONFIG) from exc
 
 
@@ -104,7 +104,7 @@ def simulate(
             config, nodes, rounds=rounds, timeout_s=timeout_s, run_root=run_root
         )
     except (ValueError, TimeoutError, RuntimeError) as exc:
-        console.print(f"[red]Simulation failed:[/red] {exc}")
+        console.print(f"[red]Simulation failed:[/red] {escape(str(exc))}")
         raise typer.Exit(EXIT_FAILED) from exc
     _print_result(result)
 
@@ -136,7 +136,7 @@ def status(
         response.raise_for_status()
         body = response.json()
     except httpx.HTTPError as exc:
-        console.print(f"[red]Cannot reach {url}:[/red] {exc}")
+        console.print(f"[red]Cannot reach {escape(url)}:[/red] {escape(str(exc))}")
         raise typer.Exit(EXIT_FAILED) from exc
 
     console.print(
@@ -178,7 +178,7 @@ def plot(
     except (OSError, RuntimeError, ValueError) as exc:
         console.print(f"[red]Plotting failed:[/red] {escape(str(exc))}")
         raise typer.Exit(EXIT_FAILED) from exc
-    console.print(f"Plot written to [bold]{out_path}[/bold]")
+    console.print(f"Plot written to [bold]{escape(str(out_path))}[/bold]")
 
 
 def main() -> None:

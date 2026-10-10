@@ -110,3 +110,16 @@ def test_plot_runs_without_matplotlib_raises_install_hint(
     monkeypatch.setitem(sys.modules, "matplotlib", None)  # makes `import matplotlib` fail
     with pytest.raises(RuntimeError, match=r"flaw\[plot\]"):
         plot_runs({"run": tmp_path / "run"}, tmp_path / "plot.png")
+
+
+def test_extract_series_skips_void_rows_even_with_data() -> None:
+    lines = [round_line(1, aggregated={"val_accuracy": 0.5}, void=True)]
+    assert extract_series(lines, "val_accuracy") == ([], [])
+
+
+def test_plot_runs_include_central_by_default(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    write_metrics(run, [round_line(1, central={"val_accuracy": 0.4})])
+    out = tmp_path / "plot.png"
+    assert plot_runs({"run": run}, out) == out
+    assert out.exists()

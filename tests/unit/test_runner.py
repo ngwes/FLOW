@@ -62,14 +62,22 @@ def outcome() -> TrainOutcome:
     )
 
 
+def registered(shard: int | None = 0) -> RegisterResponse:
+    return RegisterResponse(
+        accepted=True, run=RunInfo(name="exp1", current_round=0, phase="idle"), shard=shard
+    )
+
+
 class FakeClient:
     def __init__(self, assignments: list) -> None:
         self.assignments = list(assignments)
         self.register_errors: list[Exception] = []
+        self.register_responses: list[object] = []
         self.register_shard: int | None = 0
         self.download_errors: list[Exception] = []
         self.heartbeat_error: Exception | None = None
         self.submit_accepted = True
+        self.submit_errors: list[Exception] = []
         # real mnist_cnn state dict: the runner builds cfg.model and loads
         # strictly (spec 5.x), so a toy {"w": ...} dict cannot load
         self.sd = MnistCNN().state_dict()
@@ -83,6 +91,11 @@ class FakeClient:
     def register(self, capabilities=None):  # type: ignore[no-untyped-def]
         self.register_calls += 1
         self.capabilities = capabilities
+        if self.register_responses:
+            item = self.register_responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
         if self.register_errors:
             raise self.register_errors.pop(0)
         return RegisterResponse(
@@ -108,6 +121,8 @@ class FakeClient:
 
     def submit_result(self, round_no, update, num_samples, metrics, duration_s, device):  # type: ignore[no-untyped-def]
         self.submitted.append((round_no, update, num_samples, metrics, duration_s, device))
+        if self.submit_errors:
+            raise self.submit_errors.pop(0)
         return ResultResponse(
             accepted=self.submit_accepted, reason=None if self.submit_accepted else "stale"
         )
@@ -448,3 +463,98 @@ def test_stop_event_mid_loop(tmp_path: Path) -> None:
         sleep=lambda s: None,
     )
     assert result == "stopped" and len(client.submitted) == 1
+
+
+# --- fix wave: reconnection after an orchestrator restart ---
+
+
+def test_unknown_node_on_assignment_reregisters(tmp_path: Path) -> None:
+    config = cfg(tmp_path)
+    client = FakeClient(
+        [
+            ClientError(404, "unknown node", fatal=True),
+            assignment(1),
+            RunFinished(reason="max_rounds"),
+        ]
+    )
+    sleeps: list[float] = []
+    result = run_node(
+        config,
+        "http://x",
+        client=client,
+        prepare_data=lambda c, s, seed: ("t", "v"),
+        train=lambda *a, **kw: outcome(),
+        sleep=sleeps.append,
+    )
+    assert result == "finished"
+    assert client.register_calls == 2
+    assert len(client.submitted) == 1
+    assert sleeps == []
+
+
+def test_unknown_node_on_submit_reregisters_and_replays_round(tmp_path: Path) -> None:
+    config = cfg(tmp_path)
+    client = FakeClient([assignment(1), assignment(1), RunFinished(reason="max_rounds")])
+    client.submit_errors = [ClientError(404, "unknown node", fatal=True)]
+    prepared: list[tuple] = []
+
+    def prepare(c, shard, seed):  # type: ignore[no-untyped-def]
+        prepared.append((shard, seed))
+        return ("t", "v")
+
+    sleeps: list[float] = []
+    result = run_node(
+        config,
+        "http://x",
+        client=client,
+        prepare_data=prepare,
+        train=lambda *a, **kw: outcome(),
+        sleep=sleeps.append,
+    )
+    assert result == "finished"
+    assert client.register_calls == 2
+    assert len(client.submitted) == 2
+    assert prepared == [(0, 42), (0, 42)]  # data re-prepared after reconnect
+    assert sleeps == []
+
+
+def test_reregister_rejection_is_fatal(tmp_path: Path) -> None:
+    config = cfg(tmp_path)
+    client = FakeClient([ClientError(404, "unknown node", fatal=True)])
+    client.register_responses = [registered(), ClientError(403, "bad token", fatal=True)]
+    result = run_node(config, "http://x", client=client, sleep=lambda s: None)
+    assert result == "fatal_error"
+    assert client.register_calls == 2
+
+
+def test_reregister_rejection_during_round_is_fatal(tmp_path: Path) -> None:
+    config = cfg(tmp_path)
+    client = FakeClient([assignment(1)])
+    client.submit_errors = [ClientError(404, "unknown node", fatal=True)]
+    client.register_responses = [registered(), ClientError(403, "bad token", fatal=True)]
+    result = run_node(
+        config,
+        "http://x",
+        client=client,
+        prepare_data=lambda c, s, seed: ("t", "v"),
+        train=lambda *a, **kw: outcome(),
+        sleep=lambda s: None,
+    )
+    assert result == "fatal_error"
+    assert client.register_calls == 2
+
+
+def test_stop_during_reregister_returns_stopped(tmp_path: Path) -> None:
+    config = cfg(tmp_path)
+    client = FakeClient([ClientError(404, "unknown node", fatal=True)])
+    client.register_responses = [registered(), ClientError(0, "down", fatal=False)]
+    stop = threading.Event()
+    result = run_node(
+        config,
+        "http://x",
+        client=client,
+        stop_event=stop,
+        sleep=lambda s: stop.set(),
+    )
+    assert result == "stopped"
+    assert client.register_calls == 2

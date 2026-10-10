@@ -228,3 +228,44 @@ def test_plot_command_bad_metric_exits_1(tmp_path: Path, monkeypatch: pytest.Mon
     result = runner.invoke(cli.app, ["plot", str(tmp_path / "a"), "--metric", "nope"])
     assert result.exit_code == 1
     assert "no plottable data" in result.output
+
+
+# --- fix wave: rich-markup escapes on interpolated text ---
+
+
+def test_invalid_config_error_text_survives_rich_markup(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("run: {name: x}\nbogus: 1\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["node", str(bad)])
+    assert result.exit_code == 2
+    assert "extra_forbidden" in result.output
+    # the bracketed diagnostic is what rich markup would otherwise eat
+    assert "[type=extra_forbidden" in result.output
+
+
+def test_simulation_failure_text_survives_rich_markup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: object, **kw: object) -> SimulationResult:
+        raise RuntimeError("boom [bold] end")
+
+    monkeypatch.setattr(cli, "run_simulation", boom)
+    result = runner.invoke(cli.app, ["simulate", str(write_cfg(tmp_path))])
+    assert result.exit_code == 1
+    assert "boom [bold] end" in result.output
+
+
+def test_plot_success_line_escapes_out_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "plot_runs", lambda runs, out, **kw: Path(out))
+    weird_path = tmp_path / "o[bold]ut.png"
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "run"), "--out", str(weird_path)])
+    assert result.exit_code == 0
+    assert str(weird_path) in result.output
+
+
+def test_plot_command_missing_run_dir_exits_1(tmp_path: Path) -> None:
+    result = runner.invoke(cli.app, ["plot", str(tmp_path / "missing")])
+    assert result.exit_code == 1
+    assert "Plotting failed" in result.output

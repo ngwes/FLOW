@@ -44,7 +44,8 @@ class ClientError(Exception):
 
     ``status_code`` is 0 for transport errors, else the HTTP status code;
     ``reason`` is the server's ``{"reason": ...}`` text (or the raw body);
-    ``fatal`` is True when a retry cannot help (400/403/404/409).
+    ``fatal`` is True when a retry cannot help (400/403/404/409) -- callers may
+    still override that policy for :attr:`unknown_node`, which re-registration fixes.
     """
 
     def __init__(self, status_code: int, reason: str, fatal: bool) -> None:
@@ -52,6 +53,11 @@ class ClientError(Exception):
         self.status_code = status_code
         self.reason = reason
         self.fatal = fatal
+
+    @property
+    def unknown_node(self) -> bool:
+        """True for the orchestrator's 404 "unknown node" (after a restart: re-register)."""
+        return self.status_code == 404 and self.reason.startswith("unknown node")
 
 
 class OrchestratorClient:

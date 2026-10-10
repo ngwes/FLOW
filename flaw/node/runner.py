@@ -89,6 +89,27 @@ def _heartbeat_loop(client: NodeClient, cfg: FlawConfig, stop: threading.Event) 
             log.debug("heartbeat failed: %s", exc)
 
 
+def _register_with_backoff(
+    client: NodeClient,
+    capabilities: Capabilities,
+    *,
+    sleep: Callable[[float], None],
+    stop: threading.Event,
+) -> RegisterResponse | str:
+    """(Re-)register until accepted; returns the response, or ``"fatal_error"``/``"stopped"``."""
+    attempt = 0
+    while not stop.is_set():
+        try:
+            return client.register(capabilities)
+        except ClientError as exc:
+            if exc.fatal:
+                log.error("registration rejected: %s", exc)
+                return "fatal_error"
+            sleep(_backoff(attempt))
+            attempt += 1
+    return "stopped"
+
+
 def run_node(
     cfg: FlawConfig,
     server_url: str,
@@ -102,7 +123,11 @@ def run_node(
     sleep: Callable[[float], None] = time.sleep,
     stop_event: threading.Event | None = None,
 ) -> str:
-    """Drive one node through a run; returns ``"finished"``, ``"stopped"`` or ``"fatal_error"``."""
+    """Drive one node through a run; returns ``"finished"``, ``"stopped"`` or ``"fatal_error"``.
+
+    If the orchestrator restarts mid-run the node re-registers automatically
+    (with backoff) and keeps training; the orchestrator restores its shard.
+    """
     stop = stop_event if stop_event is not None else threading.Event()
     device, device_name = pick_device(device if device is not None else resolve_device(cfg))
     apply_vram_cap(cfg, device)
@@ -111,20 +136,10 @@ def run_node(
         client = OrchestratorClient(server_url, cfg.federation.token, cfg, resolve_node_id(cfg))
     heartbeat_thread: threading.Thread | None = None
     try:
-        attempt = 0
-        while not stop.is_set():
-            try:
-                registration = client.register(Capabilities(device=device, device_name=device_name))
-            except ClientError as exc:
-                if exc.fatal:
-                    log.error("registration rejected: %s", exc)
-                    return "fatal_error"
-                sleep(_backoff(attempt))
-                attempt += 1
-                continue
-            break
-        else:
-            return "stopped"
+        capabilities = Capabilities(device=device, device_name=device_name)
+        registration = _register_with_backoff(client, capabilities, sleep=sleep, stop=stop)
+        if isinstance(registration, str):
+            return registration
         shard = registration.shard
         heartbeat_thread = threading.Thread(
             target=_heartbeat_loop, args=(client, cfg, stop), daemon=True
@@ -133,11 +148,37 @@ def run_node(
         log.info("registered as %s", resolve_node_id(cfg))
 
         datasets: tuple[Dataset[Any], Dataset[Any]] | None = None
+
+        def reregister(exc: ClientError) -> str | None:
+            """Re-register after the orchestrator forgot this node; None -> keep going.
+
+            A restarted orchestrator answers 404 "unknown node" until the node
+            registers again; the registry restores its old shard from state.json.
+            """
+            nonlocal shard, datasets
+            log.warning(
+                "orchestrator no longer knows node %s (%s); re-registering",
+                resolve_node_id(cfg),
+                exc,
+            )
+            registration = _register_with_backoff(client, capabilities, sleep=sleep, stop=stop)
+            if isinstance(registration, str):
+                return registration
+            shard = registration.shard
+            datasets = None  # re-select local data under the (re-)assigned shard
+            return None
+
         attempt = 0
         while not stop.is_set():
             try:
                 assignment = client.get_assignment()
             except ClientError as exc:
+                if exc.unknown_node:
+                    outcome = reregister(exc)
+                    if outcome is not None:
+                        return outcome
+                    attempt = 0
+                    continue
                 if exc.fatal:
                     log.error("orchestrator rejected the node: %s", exc)
                     return "fatal_error"
@@ -187,6 +228,12 @@ def run_node(
                 else:
                     log.info("round %d update rejected: %s", assignment.round, response.reason)
             except ClientError as exc:
+                if exc.unknown_node:
+                    outcome = reregister(exc)
+                    if outcome is not None:
+                        return outcome
+                    attempt = 0
+                    continue
                 if exc.fatal:
                     log.error("round %d rejected: %s", assignment.round, exc)
                     return "fatal_error"

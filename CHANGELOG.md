@@ -42,3 +42,7 @@ First release: the federated core, the container path, and the docs (Phases 1–
 
 - No secure aggregation or TLS; runs assume a trusted network (Phase 4, not built).
 - Single model family per run (Phase 4 explores multi-model support).
+- Four config knobs are accepted and validated but never read by the framework in
+  v0.1.0: `storage.blobs` (including the `FLAW_BLOBS` override), `data.shard`,
+  `evaluation.federated`, and `resources.cpus`/`resources.memory` (container quotas
+  come from `docker-compose.yml` instead).
