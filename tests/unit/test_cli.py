@@ -37,6 +37,29 @@ def test_configure_logging_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["level"] == logging.INFO
 
 
+def test_per_request_http_logs_only_when_verbose(monkeypatch: pytest.MonkeyPatch) -> None:
+    # httpx logs every request at INFO; at lab scale that buries the round lines.
+    monkeypatch.setattr(cli.logging, "basicConfig", lambda **kw: None)
+    httpx_logger = logging.getLogger("httpx")
+    monkeypatch.setattr(httpx_logger, "level", httpx_logger.level)  # restored afterwards
+    cli._configure_logging(False)
+    assert httpx_logger.level == logging.WARNING
+    cli._configure_logging(True)
+    assert httpx_logger.level == logging.DEBUG
+
+
+@pytest.mark.parametrize(("flags", "access_log"), [([], False), (["-v"], True)])
+def test_orchestrator_access_log_only_when_verbose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], access_log: bool
+) -> None:
+    calls: dict = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.update(kw))
+    monkeypatch.setattr(cli.logging, "basicConfig", lambda **kw: None)
+    args = [*flags, "orchestrator", str(write_cfg(tmp_path)), "--run-root", str(tmp_path / "r")]
+    assert runner.invoke(cli.app, args).exit_code == 0
+    assert calls["access_log"] is access_log
+
+
 def test_orchestrator_command_builds_app_and_snapshots_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

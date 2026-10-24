@@ -38,6 +38,8 @@ def _configure_logging(verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # httpx logs every request at INFO, which buries the round lines; -v brings it back
+    logging.getLogger("httpx").setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
 def _load_or_exit(path: Path) -> FlawConfig:
@@ -50,15 +52,18 @@ def _load_or_exit(path: Path) -> FlawConfig:
 
 @app.callback()
 def main_callback(
+    ctx: typer.Context,
     version: bool = typer.Option(False, "--version", callback=_version_callback, is_eager=True),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug logging"),
 ) -> None:
     """Train one model across the PCs you already have."""
     _configure_logging(verbose)
+    ctx.obj = {"verbose": verbose}
 
 
 @app.command()
 def orchestrator(
+    ctx: typer.Context,
     config: Path = typer.Argument(..., help="Training description YAML"),
     run_root: Path = typer.Option(Path("runs"), help="Where run artifacts are stored"),
     host: str = typer.Option("0.0.0.0", help="Bind address"),
@@ -69,7 +74,11 @@ def orchestrator(
     run_dir = prepare_run_dir(cfg, run_root, snapshot_text=config_source_text(config))
     console.print(f"Run [bold]{cfg.run.name}[/bold] - state in {run_dir.run_dir}")
     console.print(f"Listening on http://{host}:{port}")
-    uvicorn.run(create_app(cfg, run_dir), host=host, port=port, log_level="info")
+    # one access-log line per heartbeat/poll is noise; -v turns it back on
+    access_log = bool(ctx.obj and ctx.obj.get("verbose"))
+    uvicorn.run(
+        create_app(cfg, run_dir), host=host, port=port, log_level="info", access_log=access_log
+    )
 
 
 @app.command()
