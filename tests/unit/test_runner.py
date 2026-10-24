@@ -1,3 +1,4 @@
+import logging
 import socket
 import threading
 import time
@@ -79,8 +80,9 @@ class FakeClient:
         self.submit_accepted = True
         self.submit_errors: list[Exception] = []
         # real mnist_cnn state dict: the runner builds cfg.model and loads
-        # strictly (spec 5.x), so a toy {"w": ...} dict cannot load
+        # strictly, so a toy {"w": ...} dict cannot load
         self.sd = MnistCNN().state_dict()
+        self.node_id = "fake-node"
         self.register_calls = 0
         self.heartbeat_calls = 0
         self.downloaded: list[BlobRef] = []
@@ -212,6 +214,43 @@ def test_registration_retries_then_succeeds(tmp_path: Path) -> None:
     assert sleeps == [1.0, 2.0] and client.register_calls == 3
 
 
+def test_logs_the_identity_the_client_registers_with(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # `flaw simulate` names its clients sim-N while the config says lab-9 (or nothing,
+    # i.e. the hostname): the log must name who actually registered.
+    client = FakeClient([RunFinished(reason="max_rounds")])
+    client.node_id = "sim-3"
+    with caplog.at_level(logging.INFO, logger="flaw.node"):
+        run_node(
+            cfg(tmp_path),
+            "http://x",
+            client=client,
+            prepare_data=lambda c, s, seed: ("t", "v"),
+            train=lambda *a, **kw: outcome(),
+            sleep=lambda s: None,
+        )
+    assert "registered as sim-3" in caplog.text
+    assert "lab-9" not in caplog.text
+
+
+def test_round_log_line_is_compact(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    client = FakeClient([assignment(1), RunFinished(reason="max_rounds")])
+    with caplog.at_level(logging.INFO, logger="flaw.node"):
+        run_node(
+            cfg(tmp_path),
+            "http://x",
+            client=client,
+            prepare_data=lambda c, s, seed: ("t", "v"),
+            train=lambda *a, **kw: outcome(),
+            sleep=lambda s: None,
+        )
+    done = [r.getMessage() for r in caplog.records if "done" in r.getMessage()]
+    metrics = outcome().metrics
+    expected = " ".join(f"{key}={value:.4f}" for key, value in sorted(metrics.items()))
+    assert done == [f"round 1 done: {expected}"]
+
+
 def test_register_fatal_returns_immediately(tmp_path: Path) -> None:
     config = cfg(tmp_path)
     client = FakeClient([RunFinished(reason="max_rounds")])
@@ -333,6 +372,63 @@ def test_vram_cap_and_gpu_device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert client.capabilities.device == "cuda:0"
 
 
+def _cgroup(root: Path, files: dict[str, str]) -> Path:
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        ({"cpu.max": "400000 100000\n"}, 4.0),  # cgroup v2, `--cpus 4`
+        ({"cpu.max": "150000 100000\n"}, 1.5),
+        ({"cpu.max": "max 100000\n"}, None),  # v2, no limit
+        ({"cpu/cpu.cfs_quota_us": "250000\n", "cpu/cpu.cfs_period_us": "100000\n"}, 2.5),  # v1
+        ({"cpu/cpu.cfs_quota_us": "-1\n", "cpu/cpu.cfs_period_us": "100000\n"}, None),
+        ({}, None),  # not in a cgroup we can read (bare metal, Windows)
+        ({"cpu.max": "garbage\n"}, None),
+    ],
+)
+def test_cgroup_cpu_limit(tmp_path: Path, files: dict[str, str], expected: float | None) -> None:
+    assert runner.cgroup_cpu_limit(_cgroup(tmp_path, files)) == expected
+
+
+@pytest.mark.parametrize(
+    ("limit", "env", "current", "expected_calls"),
+    [
+        (4.0, {}, 11, [4]),  # the compose case: 11 threads squeezed into 4 CPUs
+        (1.5, {}, 11, [2]),  # partial CPUs round up
+        (0.5, {}, 11, [1]),
+        (16.0, {}, 11, []),  # quota above the default: leave torch alone
+        (None, {}, 11, []),  # no quota
+        (4.0, {"OMP_NUM_THREADS": "8"}, 11, []),  # an explicit setting wins
+    ],
+)
+def test_apply_cpu_quota_sizes_torch_threads(
+    monkeypatch: pytest.MonkeyPatch,
+    limit: float | None,
+    env: dict[str, str],
+    current: int,
+    expected_calls: list[int],
+) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(runner, "cgroup_cpu_limit", lambda: limit)
+    monkeypatch.setattr(torch, "get_num_threads", lambda: current)
+    monkeypatch.setattr(torch, "set_num_threads", calls.append)
+    runner.apply_cpu_quota(env)
+    assert calls == expected_calls
+
+
+def test_run_node_applies_cpu_quota(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    applied: list[bool] = []
+    monkeypatch.setattr(runner, "apply_cpu_quota", lambda: applied.append(True))
+    client = FakeClient([RunFinished(reason="max_rounds")])
+    assert run_node(cfg(tmp_path), "http://x", client=client, sleep=lambda s: None) == "finished"
+    assert applied == [True]
+
+
 def test_device_override_wins_over_auto_detection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -358,6 +454,7 @@ def test_default_client_construction_and_close(
     class FakeOrchClient:
         def __init__(self, base_url, token, cfg_, node_id, **kw):  # type: ignore[no-untyped-def]
             captured.update(base_url=base_url, token=token, node_id=node_id)
+            self.node_id = node_id
 
         def register(self, capabilities=None):  # type: ignore[no-untyped-def]
             return RegisterResponse(

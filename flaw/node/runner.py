@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import math
+import os
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, Protocol
 
 import torch
@@ -35,6 +38,8 @@ MAX_BACKOFF_S = 30.0
 
 class NodeClient(Protocol):
     """The client surface the loop needs; :class:`OrchestratorClient` satisfies it."""
+
+    node_id: str  # the identity this client registers under (logs report it)
 
     def register(self, capabilities: Capabilities | None = None) -> RegisterResponse: ...
 
@@ -79,6 +84,42 @@ def apply_vram_cap(cfg: FlawConfig, device: str) -> None:
         torch.cuda.set_per_process_memory_fraction(
             cfg.resources.vram_fraction, index if index is not None else 0
         )
+
+
+def cgroup_cpu_limit(root: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """CPUs the container quota allows (``--cpus``), or None when unlimited or unknown.
+
+    Reads cgroup v2 ``cpu.max`` ("400000 100000" = 4 CPUs) or, on older hosts, the
+    v1 ``cpu.cfs_quota_us`` / ``cpu.cfs_period_us`` pair.
+    """
+    try:
+        cpu_max = root / "cpu.max"
+        if cpu_max.exists():
+            quota, period = cpu_max.read_text(encoding="utf-8").split()
+            return None if quota == "max" else int(quota) / int(period)
+        quota_us = int((root / "cpu" / "cpu.cfs_quota_us").read_text(encoding="utf-8"))
+        period_us = int((root / "cpu" / "cpu.cfs_period_us").read_text(encoding="utf-8"))
+        return None if quota_us <= 0 else quota_us / period_us
+    except (OSError, ValueError):
+        return None
+
+
+def apply_cpu_quota(environ: Mapping[str, str] = os.environ) -> None:
+    """Size torch's thread pool to the container's CPU quota.
+
+    torch starts one thread per *host* core; squeezed into a smaller quota they
+    get throttled, and training ran ~100x slower in a 4-CPU node container on a
+    22-core host. An explicit ``OMP_NUM_THREADS`` wins.
+    """
+    if "OMP_NUM_THREADS" in environ:
+        return
+    limit = cgroup_cpu_limit()
+    if limit is None:
+        return
+    threads = max(1, math.ceil(limit))
+    if threads < torch.get_num_threads():
+        torch.set_num_threads(threads)
+        log.info("CPU quota %.1f: using %d torch threads", limit, threads)
 
 
 def _heartbeat_loop(client: NodeClient, cfg: FlawConfig, stop: threading.Event) -> None:
@@ -131,6 +172,7 @@ def run_node(
     stop = stop_event if stop_event is not None else threading.Event()
     device, device_name = pick_device(device if device is not None else resolve_device(cfg))
     apply_vram_cap(cfg, device)
+    apply_cpu_quota()
     owns_client = client is None
     if client is None:
         client = OrchestratorClient(server_url, cfg.federation.token, cfg, resolve_node_id(cfg))
@@ -145,7 +187,7 @@ def run_node(
             target=_heartbeat_loop, args=(client, cfg, stop), daemon=True
         )
         heartbeat_thread.start()
-        log.info("registered as %s", resolve_node_id(cfg))
+        log.info("registered as %s", client.node_id)
 
         datasets: tuple[Dataset[Any], Dataset[Any]] | None = None
 
@@ -158,7 +200,7 @@ def run_node(
             nonlocal shard, datasets
             log.warning(
                 "orchestrator no longer knows node %s (%s); re-registering",
-                resolve_node_id(cfg),
+                client.node_id,
                 exc,
             )
             registration = _register_with_backoff(client, capabilities, sleep=sleep, stop=stop)
@@ -224,7 +266,8 @@ def run_node(
                 )
                 attempt = 0
                 if response.accepted:
-                    log.info("round %d done: %s", assignment.round, result.metrics)
+                    summary = " ".join(f"{k}={v:.4f}" for k, v in sorted(result.metrics.items()))
+                    log.info("round %d done: %s", assignment.round, summary)
                 else:
                     log.info("round %d update rejected: %s", assignment.round, response.reason)
             except ClientError as exc:
