@@ -4,8 +4,7 @@ FL@W moves two kinds of things between machines: small JSON control messages and
 **weight blobs** — PyTorch `state_dict` files that travel as raw bytes, never inside
 JSON. This document is the complete contract between a node and the orchestrator:
 enough to implement your own client. Wire types live in `flaw/protocol.py`; the
-endpoints in `flaw/orchestrator/server.py` (registration, blobs, status) and the
-round-loop additions there.
+endpoints and the round loop in `flaw/orchestrator/server.py`.
 
 ## Terms
 
@@ -47,7 +46,7 @@ garbage-collected.
 - `POST /register` — the shared secret is the `token` field of the JSON body.
 - `POST /blob` — the secret is the `X-Flaw-Token` header.
 - All other endpoints are open on the LAN in v1. TLS and authenticated reads are
-  Phase 4 (not built). Run FL@W on a trusted network only.
+  not built yet. Run FL@W on a trusted network only.
 
 ## Endpoints
 

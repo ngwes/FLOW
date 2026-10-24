@@ -59,6 +59,12 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
           memory: 8g
 ```
 
+- Nodes read their CPU quota at startup and size PyTorch's thread pool to match
+  (the log says `CPU quota 4.0: using 4 torch threads`). Without that, PyTorch starts
+  one thread per *host* core and the quota throttles them, which once made training in
+  a 4-CPU container about 100x slower. To override, set `OMP_NUM_THREADS` on the node
+  container; an explicit value always wins.
+
 - Split a shared GPU between two node containers with the soft VRAM cap:
   `FLAW_VRAM_FRACTION=0.45` per node (see `flaw.yaml` → `resources.vram_fraction`).
 
@@ -104,9 +110,14 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 | CUDA OOM on a node | model/batch too big, or two nodes share one GPU | lower `training.batch_size`, set `resources.vram_fraction` |
 | run stalls near the deadline each round | one node is much slower | raise `federation.round_deadline_s` |
 | `nvidia-smi` works on the host but not in a container | toolkit/desktop GPU support missing | redo the passthrough section above |
+| training is far slower in a container than on the bare machine | `OMP_NUM_THREADS` set higher than the container's CPU quota | unset it (nodes then match the quota) or lower it to the `cpus:` limit |
+| need to see every HTTP request | per-request logs are hidden by default | run with `-v`, e.g. `flaw -v node ...`: httpx request lines and the orchestrator's access log come back |
 
 ## See also
 
-- `docs/protocol.md` — the wire protocol, blob conventions, and round-loop semantics.
-- `README.md` — the 60-second demo and the two data modes.
-- `examples/compare_iid_non_iid/` — why sharding affects training quality.
+- [Protocol reference](protocol.md): the wire protocol, blob conventions, and
+  round-loop semantics.
+- [The project README](https://github.com/ngwes/FLOW#readme): the quick start,
+  results, and the two data modes.
+- [`examples/compare_iid_non_iid`](https://github.com/ngwes/FLOW/tree/main/examples/compare_iid_non_iid):
+  why sharding affects training quality.
