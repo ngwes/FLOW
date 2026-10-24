@@ -70,16 +70,22 @@ def plot_runs(
     metric: str = "val_accuracy",
     include_central: bool = True,
 ) -> Path:
-    """Plot `metric` per round for each labeled run directory; returns the PNG path."""
+    """Plot `metric` per round for each labeled run directory; returns the PNG path.
+
+    Each run gets one color: solid for the nodes' own validation (aggregated),
+    dashed for the central test set, so the two lines of a run read as a pair.
+    """
     plt = _pyplot()
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
+    palette = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     drawn = 0
-    for label, run_dir in runs.items():
+    for index, (label, run_dir) in enumerate(runs.items()):
+        color = palette[index % len(palette)]
         lines = read_metrics(Path(run_dir) / "metrics.jsonl")
         rounds, values = extract_series(lines, metric)
         if rounds:
             drawn += 1
-            ax.plot(rounds, values, marker="o", label=f"{label} (federated)")
+            ax.plot(rounds, values, marker="o", color=color, label=f"{label} (node validation)")
         if include_central:
             central_rounds, central_values = extract_series(lines, metric, source="central")
             if central_rounds:
@@ -89,6 +95,7 @@ def plot_runs(
                     central_values,
                     linestyle="--",
                     marker="s",
+                    color=color,
                     label=f"{label} (central test set)",
                 )
     if drawn == 0:

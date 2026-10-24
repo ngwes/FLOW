@@ -117,6 +117,40 @@ def test_extract_series_skips_void_rows_even_with_data() -> None:
     assert extract_series(lines, "val_accuracy") == ([], [])
 
 
+def test_plot_runs_pairs_each_runs_lines_by_color(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A run's two series (nodes' own validation, central test set) must read as a pair:
+    # same color, solid vs dashed; different runs get different colors.
+    from matplotlib.axes import Axes
+
+    drawn: list[dict[str, object]] = []
+    original = Axes.plot
+
+    def spy(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        drawn.append(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", spy)
+    both = [round_line(1, aggregated={"val_accuracy": 0.5}, central={"val_accuracy": 0.4})]
+    write_metrics(tmp_path / "a", both)
+    write_metrics(tmp_path / "b", both)
+    plot_runs({"A": tmp_path / "a", "B": tmp_path / "b"}, tmp_path / "plot.png")
+
+    by_label = {str(kw["label"]): kw for kw in drawn}
+    assert set(by_label) == {
+        "A (node validation)",
+        "A (central test set)",
+        "B (node validation)",
+        "B (central test set)",
+    }
+    for run in ("A", "B"):
+        local, central = by_label[f"{run} (node validation)"], by_label[f"{run} (central test set)"]
+        assert local["color"] == central["color"]
+        assert local.get("linestyle", "-") == "-" and central["linestyle"] == "--"
+    assert by_label["A (node validation)"]["color"] != by_label["B (node validation)"]["color"]
+
+
 def test_plot_runs_include_central_by_default(tmp_path: Path) -> None:
     run = tmp_path / "run"
     write_metrics(run, [round_line(1, central={"val_accuracy": 0.4})])
