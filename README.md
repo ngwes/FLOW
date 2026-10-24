@@ -208,3 +208,15 @@ merging.
 ## License
 
 [MIT](LICENSE)
+
+## A personal note
+
+I know FL@W isn't the most advanced idea, nor the most recent one, nor the one most in
+tune with where AI is today. But it is the idea I set out to build for my MSc degree, a
+long time ago. Back then I only managed a very primitive implementation, one I never felt
+was worth showing to the world, and it has stayed with me ever since as unfinished
+business.
+
+Today, with the help of AI, I went back to that very same idea and implementation and
+finally saw it through. FL@W is my way of closing that chapter, and of making peace with
+the project I couldn't finish.
