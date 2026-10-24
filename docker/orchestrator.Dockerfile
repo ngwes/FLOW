@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-COPY pyproject.toml ./
+COPY pyproject.toml README.md LICENSE ./
 COPY flaw ./flaw
 RUN pip install .
 

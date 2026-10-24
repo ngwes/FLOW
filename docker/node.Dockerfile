@@ -18,7 +18,7 @@ RUN if [ -n "$FLAW_TORCH_INDEX_URL" ]; then \
         pip install torch torchvision --index-url "$FLAW_TORCH_INDEX_URL"; \
     fi
 
-COPY pyproject.toml ./
+COPY pyproject.toml README.md LICENSE ./
 COPY flaw ./flaw
 RUN pip install .
 
