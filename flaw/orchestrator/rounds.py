@@ -1,4 +1,4 @@
-"""Round state machine: phases, elastic close rules, and voiding (spec 5.5).
+"""Round state machine: phases, elastic close rules, and voiding.
 
 The orchestrator drives one :class:`RoundManager` per run.  Each federated
 round moves ``IDLE`` -> ``OPEN`` -> ``IDLE`` (with a final ``FINISHED`` at

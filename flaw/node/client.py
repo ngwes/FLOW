@@ -1,4 +1,4 @@
-"""Node-side HTTP client for the orchestrator API (spec 5.1).
+"""Node-side HTTP client for the orchestrator API.
 
 One :class:`OrchestratorClient` per training node speaks the wire protocol:
 register, long-poll for assignments, move weight blobs (verifying sha256 on

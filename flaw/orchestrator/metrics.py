@@ -1,4 +1,4 @@
-"""Metrics journal and early-stopping rules (spec 4.6/4.7).
+"""Metrics journal and early-stopping rules.
 
 Per-round samples from each node are aggregated into one run-level metric
 dict, appended as a JSON line to ``metrics.jsonl``, and fed to an

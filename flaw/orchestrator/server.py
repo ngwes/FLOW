@@ -1,4 +1,4 @@
-"""Orchestrator HTTP API: registration, heartbeats, blobs, status (spec 5.1).
+"""Orchestrator HTTP API: registration, heartbeats, blobs, status.
 
 The :class:`Orchestrator` object owns the run's volatile state (registry, blob
 store, run bookkeeping) and is kept separate from the FastAPI wiring in

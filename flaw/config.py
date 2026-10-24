@@ -182,7 +182,7 @@ class FlawConfig(BaseModel):
     resources: ResourcesSection = ResourcesSection()
 
     def canonical_hash_payload(self) -> dict[str, object]:
-        """The subset of the config that must match across nodes (spec 5.4).
+        """The subset of the config that must match across nodes.
 
         Per-node paths and sharding choices are deliberately excluded so that
         federated-mode nodes with different local data still match.

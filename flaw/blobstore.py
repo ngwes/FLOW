@@ -1,4 +1,4 @@
-"""On-disk blob store: sha256-tracked weight files with retention GC (spec 5.2).
+"""On-disk blob store: sha256-tracked weight files with retention GC.
 
 Blobs (global weights and node updates) are plain files under
 ``root/r<NNNN>/``; the blob id maps to the path by appending ``.pt``, so the

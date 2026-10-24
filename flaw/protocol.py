@@ -1,4 +1,4 @@
-"""FL@W wire protocol: pydantic schemas, blob ids, config hashing (spec 5.1).
+"""FL@W wire protocol: pydantic schemas, blob ids, config hashing.
 
 Everything that crosses the network between orchestrator and nodes is defined
 here, so both sides serialize exactly the same shapes.  ``ProtocolError``

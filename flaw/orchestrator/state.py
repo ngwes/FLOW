@@ -1,4 +1,4 @@
-"""Run directory layout and crash-safe run state (spec 4.3).
+"""Run directory layout and crash-safe run state.
 
 One :class:`RunDir` per run owns the on-disk artifact layout under
 ``root/<run-name>/``: the config snapshot, ``state.json``, ``metrics.jsonl``,

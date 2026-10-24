@@ -4,7 +4,7 @@ Built-in CNNs are registered under short names (``mnist_cnn``, ``cifar_cnn``);
 any other network is loaded from a python import path such as ``my_net.Net``,
 with ``model.module_path`` prepended to ``sys.path`` first if set.  Every
 built-in model holds only floating-point parameters and buffers, so a plain
-mean of state_dicts is well defined (spec 5.3 aggregation v1: no integer
+mean of state_dicts is well defined (aggregation v1: no integer
 buffers such as BatchNorm's ``num_batches_tracked``).
 """
 
