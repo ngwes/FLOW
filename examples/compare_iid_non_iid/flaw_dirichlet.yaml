@@ -1,15 +1,16 @@
 # Same run, but shards are split with a Dirichlet(0.5) draw: each node gets a skewed
 # class mix — like handing every lab a different slice of the day instead of a shuffle.
+# compare.py fills in central_test.path (and data.name for --dataset tiny) before running.
 run: {name: cmp-dirichlet, seed: 42}
 model: {name: mnist_cnn}
-data: {name: tiny, scheme: dirichlet, dirichlet_alpha: 0.5, num_shards: 4, val_fraction: 0.25}
-training: {local_epochs: 2, batch_size: 32}
+data: {name: mnist, scheme: dirichlet, dirichlet_alpha: 0.5, num_shards: 4, val_fraction: 0.1}
+training: {local_epochs: 1, batch_size: 64, optimizer: {name: sgd, lr: 0.05, momentum: 0.9}}
 federation:
   token: compare-demo
   rounds: 10
   min_participants: 2
-  round_deadline_s: 120
-  heartbeat_s: 0.5
-  liveness_timeout_s: 10
-early_stopping: {metric: val_accuracy, patience: 4}
-evaluation: {central_test: {mode: "off"}}
+  round_deadline_s: 600
+  heartbeat_s: 1
+  liveness_timeout_s: 30
+early_stopping: {metric: val_accuracy, patience: 100}  # effectively off: equal-length curves
+evaluation: {central_test: {path: ./runs/central-mnist, mode: every_round}}

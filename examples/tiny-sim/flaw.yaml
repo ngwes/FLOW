@@ -3,7 +3,7 @@
 run: {name: tiny-sim, seed: 42}
 model: {name: mnist_cnn}
 data: {name: tiny, scheme: iid, num_shards: 2, val_fraction: 0.25}
-training: {local_epochs: 2, batch_size: 32}
+training: {local_epochs: 2, batch_size: 16, optimizer: {name: sgd, lr: 0.05, momentum: 0.9}}
 federation:
   token: change-me
   rounds: 4
