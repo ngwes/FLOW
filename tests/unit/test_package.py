@@ -8,13 +8,13 @@ from flaw.cli import app
 
 
 def test_version_attribute() -> None:
-    assert flaw.__version__ == "0.1.0"
+    assert flaw.__version__ == "0.2.0"
 
 
 def test_cli_version_flag() -> None:
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "flaw 0.1.0" in result.output
+    assert "flaw 0.2.0" in result.output
 
 
 def test_cli_help() -> None:

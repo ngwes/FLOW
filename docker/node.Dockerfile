@@ -1,5 +1,5 @@
 # GPU training node. Build for CUDA (default) or CPU-only (CI, no NVIDIA):
-#   docker build -f docker/node.Dockerfile -t flaw-node:0.1.0 .
+#   docker build -f docker/node.Dockerfile -t flaw-node:0.2.0 .
 #   docker build -f docker/node.Dockerfile --build-arg FLAW_BASE=python:3.11-slim \
 #     --build-arg FLAW_TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu -t flaw-node:cpu .
 # (pytorch/pytorch ships CUDA tags only; there is no :...-cpu base to point at.)

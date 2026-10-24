@@ -6,6 +6,11 @@ All notable changes to FL@W are documented in this file. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-24
+
+Bug fixes found by running FL@W for real (MNIST, Docker), quieter output, honest
+experiments, and a documentation site.
+
 ### Fixed
 
 - Node containers trained ~100x slower than they should: torch started one thread
@@ -29,8 +34,12 @@ All notable changes to FL@W are documented in this file. The format is based on
   central test set (`--dataset tiny` keeps an offline mode).
 - `examples/tiny-sim` uses SGD with momentum, so the demo visibly learns in 4 rounds.
 
+- The deployment guide covers CPU quotas, `OMP_NUM_THREADS` and `-v`.
+
 ### Added
 
+- Documentation site at <https://ngwes.github.io/FLOW/> (MkDocs Material, deployed
+  to GitHub Pages on every push to `main`).
 - MIT license, package metadata, README results and architecture diagrams.
 
 ## [0.1.0] — 2026-10-10

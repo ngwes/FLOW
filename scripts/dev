@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 # Git Bash converts /app into C:/Program Files/Git/app; keep paths verbatim.
 export MSYS_NO_PATHCONV=1
 
-IMAGE=flaw-dev:0.1.0
+IMAGE=flaw-dev:0.2.0
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "== building $IMAGE (first run only, downloads CPU torch)" >&2
   docker build -f docker/dev.Dockerfile -t "$IMAGE" .
