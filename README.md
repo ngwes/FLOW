@@ -5,7 +5,9 @@ an orchestrator averages everyone's weights every round, and no raw data ever le
 its machine. Federated averaging (FedAvg) written from scratch over HTTP plus a small
 blob store, sized for 1–3 lab PCs with consumer GPUs, and it still runs on a laptop CPU.
 
-![Terminal demo: two simulated nodes train together for four rounds](assets/demo.gif)
+**Documentation:** [ngwes.github.io/FLOW](https://ngwes.github.io/FLOW/)
+
+![Terminal demo: two simulated nodes train together for four rounds](docs/assets/demo.gif)
 
 ## Why this exists
 
@@ -104,7 +106,7 @@ the same model twice on 4 nodes for 10 rounds. The first run gives every node a 
 slice of MNIST; the second skews each node's class mix with a Dirichlet(0.5) split.
 Both runs are scored every round on the **same** 2,000 held-out MNIST test images:
 
-![IID vs non-IID: accuracy per round on node validation and on a shared central test set](assets/iid-vs-non-iid.png)
+![IID vs non-IID: accuracy per round on node validation and on a shared central test set](docs/assets/iid-vs-non-iid.png)
 
 | after 10 rounds | node validation | central test set |
 |---|---|---|
@@ -143,7 +145,7 @@ flaw status --orchestrator http://ORCHESTRATOR_IP:8000
 
 Prefer containers? `docker compose up --build` starts an orchestrator and two nodes with
 per-node CPU/memory quotas; `docker-compose.gpu.yml` pins one GPU per node. See
-[docs/deployment.md](docs/deployment.md) for both setups, GPU passthrough and
+[the deployment guide](docs/deployment.md) for both setups, GPU passthrough and
 troubleshooting.
 
 ## What you get, in `runs/<name>/`
@@ -196,7 +198,7 @@ ruff format --check . && ruff check . && mypy
 
 The suite covers 100% of `flaw/`: unit tests per module plus end-to-end scenarios over
 real HTTP (a node joining mid-run, a crash that voids a round, an orchestrator restart,
-early stopping). The wire protocol is specified in [docs/protocol.md](docs/protocol.md).
+early stopping). The wire protocol is specified in [the protocol reference](docs/protocol.md).
 
 ## How it was built
 
@@ -207,7 +209,7 @@ merging.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/ngwes/FLOW/blob/main/LICENSE)
 
 ## A personal note
 

@@ -1,0 +1,57 @@
+site_name: FL@W
+site_description: Federated Learning at Work - train one model across the PCs you already have
+site_url: https://ngwes.github.io/FLOW/
+repo_url: https://github.com/ngwes/FLOW
+repo_name: ngwes/FLOW
+edit_uri: edit/main/docs/
+copyright: MIT License
+
+# docs/review/ is a private, git-ignored review set; never build it into the site
+exclude_docs: |
+  review/
+  requirements.txt
+
+nav:
+  - Home: index.md
+  - Deployment: deployment.md
+  - Protocol reference: protocol.md
+  - Changelog: changelog.md
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.footer
+    - search.highlight
+    - toc.follow
+
+plugins:
+  - search
+  # The home page and the changelog include README.md / CHANGELOG.md from the repo
+  # root, so the site and GitHub always show the same text.
+  - include-markdown
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
