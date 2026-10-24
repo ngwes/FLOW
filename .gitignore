@@ -13,6 +13,7 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+docs/
 coverage.xml
 
 # FL@W runtime artifacts

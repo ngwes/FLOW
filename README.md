@@ -90,5 +90,4 @@ Built so far: **Phase 1** core + CLI · **Phase 2** Docker images, per-node reso
 quotas, compose · **Phase 3** docs, plotting, IID vs non-IID comparison. **Phase 4
 (later, not built):** secure aggregation, TLS, multi-model support. Further reading:
 `docs/protocol.md` (wire protocol), `docs/deployment.md` (bare processes and
-Docker, GPU passthrough), `docs/superpowers/specs/2026-10-04-flaw-design.md`
-(the design).
+Docker, GPU passthrough).

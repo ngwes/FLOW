@@ -88,7 +88,6 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 | path | created by | content |
 |---|---|---|
 | `runs/<name>/` | orchestrator | `metrics.jsonl`, `best.pt`, `final.pt`, `state.json`, `blobs/`, `config.yaml` |
-| `runs/<name>/orchestrator.log` | orchestrator | the orchestrator's log for that run |
 | `data/` (default) | nodes | downloaded datasets (`mnist`, `cifar10`) |
 | `./data/nodeN/` (compose) | nodes | per-container dataset cache |
 
