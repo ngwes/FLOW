@@ -117,20 +117,23 @@ def load_dataset(name: str, data_dir: Path) -> Dataset[Any]:
 
     ``mnist``/``cifar10`` download once into *data_dir*.  torchvision is
     imported lazily so importing this module stays fast and network-free.
-    An unknown name raises :class:`ValueError`.
+    Images become ``[0, 1]`` float tensors (``ToTensor``) -- torchvision would
+    otherwise hand out PIL images, which a DataLoader cannot batch -- the same
+    scaling the folder loader applies.  An unknown name raises :class:`ValueError`.
     """
     if name == "tiny":
         return make_tiny_dataset()[0]
-    if name == "mnist":
-        # torchvision ships no py.typed; mypy reports the first such import per file.
-        from torchvision.datasets import MNIST  # type: ignore[import-untyped]
+    if name not in ("mnist", "cifar10"):
+        raise ValueError(f"unknown dataset: {name!r}")
+    # torchvision ships no py.typed; mypy reports the first import of each module per file.
+    from torchvision import transforms  # type: ignore[import-untyped]
+    from torchvision.datasets import CIFAR10, MNIST  # type: ignore[import-untyped]
 
-        return cast("Dataset[Any]", MNIST(root=data_dir, train=True, download=True))
-    if name == "cifar10":
-        from torchvision.datasets import CIFAR10
-
-        return cast("Dataset[Any]", CIFAR10(root=data_dir, train=True, download=True))
-    raise ValueError(f"unknown dataset: {name!r}")
+    dataset_cls = MNIST if name == "mnist" else CIFAR10
+    return cast(
+        "Dataset[Any]",
+        dataset_cls(root=data_dir, train=True, download=True, transform=transforms.ToTensor()),
+    )
 
 
 def load_folder_dataset(path: Path, channels: int = 3) -> Dataset[Any]:
@@ -146,7 +149,7 @@ def load_folder_dataset(path: Path, channels: int = 3) -> Dataset[Any]:
 
 def _load_folder(path: Path, channels: int) -> Dataset[Any]:
     """torchvision ``ImageFolder`` behind the transform choice; monkeypatch target."""
-    from torchvision import transforms  # type: ignore[import-untyped]
+    from torchvision import transforms
     from torchvision.datasets import ImageFolder
 
     tfms: list[Any] = [transforms.ToTensor()]

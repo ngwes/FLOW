@@ -163,24 +163,48 @@ def test_partition_unknown_scheme_raises() -> None:
         )
 
 
-def _recording_dataset_class(records: list[tuple[object, object, object]]) -> type:
+def _recording_dataset_class(records: list[dict[str, object]]) -> type:
     class RecordingDataset:
-        def __init__(self, root: object, train: object, download: object) -> None:
-            records.append((root, train, download))
+        def __init__(self, root: object, train: object, download: object, **kw: object) -> None:
+            records.append({"root": root, "train": train, "download": download, **kw})
 
     return RecordingDataset
 
 
-@pytest.mark.parametrize(("name", "attribute"), [("mnist", "MNIST"), ("cifar10", "CIFAR10")])
+@pytest.mark.parametrize(
+    ("name", "attribute", "mode", "size", "shape"),
+    [
+        ("mnist", "MNIST", "L", (28, 28), (1, 28, 28)),
+        ("cifar10", "CIFAR10", "RGB", (32, 32), (3, 32, 32)),
+    ],
+)
 def test_load_dataset_torchvision_branches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, attribute: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    attribute: str,
+    mode: str,
+    size: tuple[int, int],
+    shape: tuple[int, int, int],
 ) -> None:
-    records: list[tuple[object, object, object]] = []
+    from PIL import Image
+
+    records: list[dict[str, object]] = []
     stub_cls = _recording_dataset_class(records)
     monkeypatch.setattr(f"torchvision.datasets.{attribute}", stub_cls)
     dataset = load_dataset(name, tmp_path)
     assert isinstance(dataset, stub_cls)
-    assert records == [(tmp_path, True, True)]
+    assert len(records) == 1
+    record = records[0]
+    assert (record["root"], record["train"], record["download"]) == (tmp_path, True, True)
+    # torchvision yields PIL images; without a tensor transform the DataLoader cannot
+    # batch them (the real MNIST demo crashed on its first training batch).
+    transform = record.get("transform")
+    assert callable(transform)
+    x = transform(Image.new(mode, size, color=255))
+    assert isinstance(x, torch.Tensor)
+    assert x.dtype == torch.float32 and tuple(x.shape) == shape
+    assert float(x.max()) == 1.0  # scaled to [0, 1], same as the folder loader
 
 
 def test_load_folder_dataset_rgb(tmp_path: Path) -> None:
