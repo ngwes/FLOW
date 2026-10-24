@@ -4,6 +4,35 @@ All notable changes to FL@W are documented in this file. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Node containers trained ~100x slower than they should: torch started one thread
+  per *host* core inside a 4-CPU quota and was throttled (a tiny round took ~60 s
+  instead of ~1 s). Nodes now size torch's thread pool to the cgroup CPU quota
+  (v2 and v1); an explicit `OMP_NUM_THREADS` still wins.
+- Shared-mode `mnist` and `cifar10` crashed on the first training batch: torchvision
+  returned PIL images that a DataLoader cannot batch. Images are now `[0, 1]` tensors,
+  the same scaling the folder loader uses.
+- Node logs reported the configured id or the hostname instead of the identity the
+  node actually registered with (in `flaw simulate`: `sim-0`, `sim-1`, ...).
+- Docker images copy `README.md` and `LICENSE`, which `pip install .` now needs.
+
+### Changed
+
+- Quieter logs: httpx's per-request lines and uvicorn's access log appear only with
+  `--verbose`; the per-round node line is compact (`loss=… val_accuracy=…`).
+- `flaw plot` draws each run in one color: solid for node validation, dashed for the
+  central test set.
+- `examples/compare_iid_non_iid` runs on MNIST and scores both runs on one shared
+  central test set (`--dataset tiny` keeps an offline mode).
+- `examples/tiny-sim` uses SGD with momentum, so the demo visibly learns in 4 rounds.
+
+### Added
+
+- MIT license, package metadata, README results and architecture diagrams.
+
 ## [0.1.0] — 2026-10-10
 
 First release: the federated core, the container path, and the docs (Phases 1–3).
